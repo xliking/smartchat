@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Gateway</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    <style>
+        * {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            min-height: 100vh;
+        }
+        
+        /* Tailwind 补充样式 */
+        .bg-gray-50 { background-color: #f9fafb; }
+        .text-gray-900 { color: #111827; }
+        .text-gray-600 { color: #4b5563; }
+        .text-gray-500 { color: #6b7280; }
+        .text-gray-400 { color: #9ca3af; }
+        .border-gray-200 { border-color: #e5e7eb; }
+        .border-gray-300 { border-color: #d1d5db; }
+        .hover\:bg-gray-50:hover { background-color: #f9fafb; }
+        .hover\:text-gray-900:hover { color: #111827; }
+        .bg-white { background-color: #fff; }
+        .bg-blue-100 { background-color: #dbeafe; }
+        .bg-green-100 { background-color: #dcfce7; }
+        .bg-purple-100 { background-color: #f3e8ff; }
+        .bg-orange-100 { background-color: #fed7aa; }
+        .bg-blue-50 { background-color: #eff6ff; }
+        .text-blue-600 { color: #2563eb; }
+        .text-green-600 { color: #16a34a; }
+        .text-purple-600 { color: #9333ea; }
+        .text-orange-600 { color: #ea580c; }
+        .text-indigo-600 { color: #4f46e5; }
+        .text-red-600 { color: #dc2626; }
+        .border-blue-300 { border-color: #93c5fd; }
+        .hover\:bg-indigo-50:hover { background-color: #eef2ff; }
+        .hover\:bg-red-50:hover { background-color: #fef2f2; }
+        .hover\:bg-blue-50:hover { background-color: #eff6ff; }
+        .bg-green-600 { background-color: #16a34a; }
+        .hover\:bg-green-700:hover { background-color: #15803d; }
+        .focus\:ring-2:focus { box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.5); }
+        .focus\:ring-indigo-500:focus { box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.5); }
+        .focus\:border-indigo-500:focus { border-color: #6366f1; }
+        .transition-colors { transition-property: color, background-color, border-color; }
+        .transition-all { transition-property: all; }
+        .duration-200 { transition-duration: 200ms; }
+        
+        /* 上传区域样式 */
+        .upload-zone {
+            border: 2px dashed #d1d5db;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .upload-zone:hover {
+            border-color: #6366f1;
+            background-color: #f8fafc;
+        }
+        
+        .upload-zone.drag-over {
+            border-color: #3b82f6 !important;
+            background-color: #eff6ff !important;
+        }
+        
+        /* 动画样式 */
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+        .animate-spin { animation: spin 1s linear infinite; }
+        .animate-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse { 50% { opacity: .5; } }
+        
+        .glass-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        
+        .gradient-text {
+            background: linear-gradient(135deg, #4f46e5, #7c3aed);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #4f46e5, #7c3aed);
+            transition: all 0.3s ease;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(79, 70, 229, 0.3);
+        }
+        
+        .floating-card {
+            animation: float 6s ease-in-out infinite;
+        }
+        
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+        }
+        
+        .sidebar {
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(20px);
+            border-right: 1px solid rgba(229, 231, 235, 0.5);
+        }
+        
+        .nav-item {
+            transition: all 0.2s ease;
+        }
+        
+        .nav-item:hover {
+            background: rgba(99, 102, 241, 0.1);
+            transform: translateX(4px);
+        }
+        
+        .nav-item.active {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.1));
+            border-right: 3px solid #6366f1;
+        }
+        
+        .content-area {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(10px);
+        }
+        
+        .upload-zone {
+            border: 2px dashed #e2e8f0;
+            transition: all 0.3s ease;
+        }
+        
+        .upload-zone:hover {
+            border-color: #6366f1;
+            background: rgba(99, 102, 241, 0.05);
+        }
+        
+        .upload-zone.dragover {
+            border-color: #6366f1;
+            background: rgba(99, 102, 241, 0.1);
+            transform: scale(1.02);
+        }
+        
+        .card-hover {
+            transition: all 0.3s ease;
+        }
+        
+        .card-hover:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        }
+        
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 8px;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        
+        .status-online {
+            background: rgba(34, 197, 94, 0.1);
+            color: #16a34a;
+        }
+        
+        .status-offline {
+            background: rgba(239, 68, 68, 0.1);
+            color: #dc2626;
+        }
+        
+        .hidden { display: none !important; }
+        
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 16px 20px;
+            border-radius: 12px;
+            color: white;
+            font-weight: 500;
+            z-index: 1000;
+            transform: translateX(400px);
+            transition: transform 0.3s ease;
+        }
+        
+        .notification.show {
+            transform: translateX(0);
+        }
+        
+        .notification.success {
+            background: #10b981;
+        }
+        
+        .notification.error {
+            background: #ef4444;
+        }
+        
+        /* 模态框动画 */
+        .modal-show #modal-content {
+            transform: scale(1);
+            opacity: 1;
+        }
+        
+        .modal-entering #modal-content {
+            animation: modalEnter 0.3s ease-out forwards;
+        }
+        
+        .modal-leaving #modal-content {
+            animation: modalLeave 0.3s ease-in forwards;
+        }
+        
+        @keyframes modalEnter {
+            from {
+                transform: scale(0.9);
+                opacity: 0;
+            }
+            to {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+        
+        @keyframes modalLeave {
+            from {
+                transform: scale(1);
+                opacity: 1;
+            }
+            to {
+                transform: scale(0.9);
+                opacity: 0;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Loading Screen -->
+    <div id="loading" class="fixed inset-0 bg-white flex items-center justify-center z-50">
+        <div class="text-center">
+            <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
+            <p class="text-gray-600 font-medium">正在加载中...</p>
+        </div>
+    </div>
+
+    <!-- Setup Page -->
+    <div id="setup-page" class="hidden min-h-screen flex items-center justify-center p-4">
+        <div class="glass-card floating-card rounded-3xl p-8 w-full max-w-md">
+            <div class="text-center mb-8">
+                <div class="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <i data-lucide="zap" class="w-8 h-8 text-white"></i>
+                </div>
+                <h1 class="text-3xl font-bold gradient-text mb-2">AI Gateway</h1>
+                <p class="text-gray-600">智能网关系统初始化</p>
+            </div>
+            
+            <form id="setup-form" class="space-y-6">
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">管理员密码</label>
+                    <div class="relative">
+                        <input type="password" id="admin-password" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all duration-200" placeholder="请设置安全密码" required>
+                        <i data-lucide="lock" class="absolute right-3 top-3 w-5 h-5 text-gray-400"></i>
+                    </div>
+                </div>
+                
+                <button type="submit" class="btn-primary w-full py-3 px-6 text-white font-semibold rounded-xl">
+                    <i data-lucide="rocket" class="inline w-5 h-5 mr-2"></i>
+                    创建系统
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Login Page -->
+    <div id="login-page" class="hidden min-h-screen flex items-center justify-center p-4">
+        <div class="glass-card floating-card rounded-3xl p-8 w-full max-w-md">
+            <div class="text-center mb-8">
+                <div class="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <i data-lucide="shield-check" class="w-8 h-8 text-white"></i>
+                </div>
+                <h1 class="text-3xl font-bold gradient-text mb-2">欢迎回来</h1>
+                <p class="text-gray-600">请登录管理系统</p>
+            </div>
+            
+            <form id="login-form" class="space-y-6">
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">管理员密码</label>
+                    <div class="relative">
+                        <input type="password" id="login-password" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all duration-200" placeholder="请输入密码" required>
+                        <i data-lucide="key" class="absolute right-3 top-3 w-5 h-5 text-gray-400"></i>
+                    </div>
+                </div>
+                
+                <button type="submit" class="btn-primary w-full py-3 px-6 text-white font-semibold rounded-xl">
+                    <i data-lucide="log-in" class="inline w-5 h-5 mr-2"></i>
+                    登录系统
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Admin Panel -->
+    <div id="admin-panel" class="hidden min-h-screen">
+        <!-- Header -->
+        <header class="bg-white/80 backdrop-blur-md border-b border-gray-200/50 sticky top-0 z-40">
+            <div class="px-6 py-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-4">
+                        <div class="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center">
+                            <i data-lucide="zap" class="w-5 h-5 text-white"></i>
+                        </div>
+                        <div>
+                            <h1 class="text-2xl font-bold text-gray-900">AI Gateway</h1>
+                            <p class="text-sm text-gray-500">智能网关管理中心</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-4">
+                        <div class="status-badge status-online">
+                            <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                            系统运行中
+                        </div>
+                        <button id="logout-btn" class="px-4 py-2 text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors duration-200">
+                            <i data-lucide="log-out" class="inline w-4 h-4 mr-2"></i>
+                            退出登录
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="flex">
+            <!-- Sidebar -->
+            <nav class="sidebar w-64 min-h-screen p-6">
+                <div class="space-y-2">
+                    <div class="nav-item active px-4 py-3 rounded-lg cursor-pointer" data-section="overview">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-right: 0.75rem;">
+                            <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                            <polyline points="9,22 9,12 15,12 15,22"/>
+                        </svg>
+                        概览
+                    </div>
+                    <div class="nav-item px-4 py-3 rounded-lg cursor-pointer" data-section="models">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-right: 0.75rem;">
+                            <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/>
+                        </svg>
+                        模型管理
+                    </div>
+                    <div class="nav-item px-4 py-3 rounded-lg cursor-pointer" data-section="knowledge">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-right: 0.75rem;">
+                            <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+                            <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+                        </svg>
+                        知识库
+                    </div>
+                    <div class="nav-item px-4 py-3 rounded-lg cursor-pointer" data-section="configs">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-right: 0.75rem;">
+                            <circle cx="12" cy="12" r="3"/>
+                            <path d="M12 1v6m0 6v6m11-7h-6m-6 0H1m15.5-6.5-4.5 4.5m0 0-4.5 4.5m0-9 4.5 4.5"/>
+                        </svg>
+                        系统配置
+                    </div>
+                    <div class="nav-item px-4 py-3 rounded-lg cursor-pointer" data-section="keys">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-right: 0.75rem;">
+                            <path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/>
+                            <path d="m21 2-1 1"/>
+                            <path d="m5 5 8.5 8.5a2.5 2.5 0 1 1-3.5 3.5L1.5 8.5A2.5 2.5 0 0 1 5 5Z"/>
+                        </svg>
+                        API密钥
+                    </div>
+                </div>
+            </nav>
+
+            <!-- Main Content -->
+            <main class="flex-1 p-6 content-area">
+                <!-- Overview Section -->
+                <div id="overview-section" class="section-content">
+                    <div class="mb-8">
+                        <h2 class="text-3xl font-bold text-gray-900 mb-2">系统概览</h2>
+                        <p class="text-gray-600">AI网关系统运行状态和关键指标</p>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                        <div class="glass-card card-hover rounded-2xl p-6">
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                                <div style="width: 3rem; height: 3rem; background-color: #dbeafe; border-radius: 0.75rem; display: flex; align-items: center; justify-content: center;">
+                                    <svg width="24" height="24" fill="currentColor" class="text-blue-600">
+                                        <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                                    </svg>
+                                </div>
+                                <span class="text-2xl font-bold text-gray-900" id="system-uptime">在线</span>
+                            </div>
+                            <h3 class="font-semibold text-gray-900 mb-1">系统状态</h3>
+                            <p class="text-sm text-gray-500">当前运行状态</p>
+                        </div>
+                        
+                        <div class="glass-card card-hover rounded-2xl p-6">
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                                <div style="width: 3rem; height: 3rem; background-color: #dcfce7; border-radius: 0.75rem; display: flex; align-items: center; justify-content: center;">
+                                    <svg width="24" height="24" fill="none" stroke="currentColor" class="text-green-600" stroke-width="2">
+                                        <polygon points="13,2 3,14 12,14 11,22 21,10 12,10 13,2"/>
+                                    </svg>
+                                </div>
+                                <span class="text-2xl font-bold text-gray-900" id="total-requests">0</span>
+                            </div>
+                            <h3 class="font-semibold text-gray-900 mb-1">API 调用</h3>
+                            <p class="text-sm text-gray-500">总请求次数</p>
+                        </div>
+                        
+                        <div class="glass-card card-hover rounded-2xl p-6">
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                                <div style="width: 3rem; height: 3rem; background-color: #f3e8ff; border-radius: 0.75rem; display: flex; align-items: center; justify-content: center;">
+                                    <svg width="24" height="24" fill="none" stroke="currentColor" class="text-purple-600" stroke-width="2">
+                                        <ellipse cx="12" cy="5" rx="9" ry="3"/>
+                                        <path d="m3 5 9 9 9-9"/>
+                                        <path d="m3 12 9 9 9-9"/>
+                                    </svg>
+                                </div>
+                                <span class="text-2xl font-bold text-gray-900" id="files-count">0</span>
+                            </div>
+                            <h3 class="font-semibold text-gray-900 mb-1">知识库文件</h3>
+                            <p class="text-sm text-gray-500">已索引文档数</p>
+                        </div>
+                        
+                        <div class="glass-card card-hover rounded-2xl p-6">
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                                <div style="width: 3rem; height: 3rem; background-color: #fed7aa; border-radius: 0.75rem; display: flex; align-items: center; justify-content: center;">
+                                    <svg width="24" height="24" fill="none" stroke="currentColor" class="text-orange-600" stroke-width="2">
+                                        <path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/>
+                                        <path d="m21 2-1 1"/>
+                                        <path d="m5 5 8.5 8.5a2.5 2.5 0 1 1-3.5 3.5L1.5 8.5A2.5 2.5 0 0 1 5 5Z"/>
+                                    </svg>
+                                </div>
+                                <span class="text-2xl font-bold text-gray-900" id="keys-count">0</span>
+                            </div>
+                            <h3 class="font-semibold text-gray-900 mb-1">活跃密钥</h3>
+                            <p class="text-sm text-gray-500">已生成API密钥</p>
+                        </div>
+                    </div>
+                    
+                    <!-- 更多统计信息 -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+                        <div class="glass-card card-hover rounded-2xl p-6">
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                                <div style="width: 3rem; height: 3rem; background-color: #dbeafe; border-radius: 0.75rem; display: flex; align-items: center; justify-content: center;">
+                                    <svg width="24" height="24" fill="none" stroke="currentColor" class="text-blue-600" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                        <polyline points="7,10 12,15 17,10"/>
+                                        <line x1="12" y1="15" x2="12" y2="3"/>
+                                    </svg>
+                                </div>
+                                <span class="text-2xl font-bold text-gray-900" id="total-uploads">0</span>
+                            </div>
+                            <h3 class="font-semibold text-gray-900 mb-1">总上传量</h3>
+                            <p class="text-sm text-gray-500">文件和文本总数</p>
+                        </div>
+                        
+                        <div class="glass-card card-hover rounded-2xl p-6">
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                                <div style="width: 3rem; height: 3rem; background-color: #dcfce7; border-radius: 0.75rem; display: flex; align-items: center; justify-content: center;">
+                                    <svg width="24" height="24" fill="none" stroke="currentColor" class="text-green-600" stroke-width="2">
+                                        <path d="M7 8h10"/>
+                                        <path d="M7 12h4"/>
+                                        <path d="M7 16h1"/>
+                                        <rect x="4" y="4" width="16" height="16" rx="2"/>
+                                    </svg>
+                                </div>
+                                <span class="text-2xl font-bold text-gray-900" id="text-files">0</span>
+                            </div>
+                            <h3 class="font-semibold text-gray-900 mb-1">文本文档</h3>
+                            <p class="text-sm text-gray-500">直接输入的文本</p>
+                        </div>
+                        
+                        <div class="glass-card card-hover rounded-2xl p-6">
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                                <div style="width: 3rem; height: 3rem; background-color: #f3e8ff; border-radius: 0.75rem; display: flex; align-items: center; justify-content: center;">
+                                    <svg width="24" height="24" fill="none" stroke="currentColor" class="text-purple-600" stroke-width="2">
+                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                        <polyline points="14,2 14,8 20,8"/>
+                                        <line x1="16" y1="13" x2="8" y2="13"/>
+                                        <line x1="16" y1="17" x2="8" y2="17"/>
+                                        <polyline points="10,9 9,9 8,9"/>
+                                    </svg>
+                                </div>
+                                <span class="text-2xl font-bold text-gray-900" id="uploaded-files">0</span>
+                            </div>
+                            <h3 class="font-semibold text-gray-900 mb-1">上传文件</h3>
+                            <p class="text-sm text-gray-500">PDF/DOCX/TXT/MD</p>
+                        </div>
+                    </div>
+                    
+                    <!-- 最近活动 -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                        <div class="glass-card rounded-2xl p-6">
+                            <h3 class="text-xl font-semibold text-gray-900 mb-4 flex items-center">
+                                <i data-lucide="clock" class="w-5 h-5 mr-2"></i>
+                                最近上传
+                            </h3>
+                            <div id="recent-uploads" class="space-y-3">
+                                <!-- 动态加载最近上传的文件 -->
+                            </div>
+                        </div>
+                        
+                        <div class="glass-card rounded-2xl p-6">
+                            <h3 class="text-xl font-semibold text-gray-900 mb-4 flex items-center">
+                                <i data-lucide="pie-chart" class="w-5 h-5 mr-2"></i>
+                                存储统计
+                            </h3>
+                            <div class="space-y-4">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-sm text-gray-600">文本内容</span>
+                                    <span class="text-sm font-semibold" id="text-storage">0 KB</span>
+                                </div>
+                                <div class="w-full bg-gray-200 rounded-full h-2">
+                                    <div class="bg-blue-600 h-2 rounded-full" id="text-storage-bar" style="width: 0%"></div>
+                                </div>
+                                
+                                <div class="flex items-center justify-between">
+                                    <span class="text-sm text-gray-600">上传文件</span>
+                                    <span class="text-sm font-semibold" id="file-storage">0 KB</span>
+                                </div>
+                                <div class="w-full bg-gray-200 rounded-full h-2">
+                                    <div class="bg-green-600 h-2 rounded-full" id="file-storage-bar" style="width: 0%"></div>
+                                </div>
+                                
+                                <div class="flex items-center justify-between pt-2 border-t">
+                                    <span class="text-sm font-semibold text-gray-900">总计</span>
+                                    <span class="text-sm font-bold text-gray-900" id="total-storage">0 KB</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Models Section -->
+                <div id="models-section" class="section-content hidden">
+                    <div class="mb-8">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h2 class="text-3xl font-bold text-gray-900 mb-2">模型管理</h2>
+                                <p class="text-gray-600">管理AI模型和对应的系统提示词</p>
+                            </div>
+                            <button id="add-model-btn" class="btn-primary px-6 py-3 text-white font-semibold rounded-xl">
+                                <i data-lucide="plus" class="inline w-5 h-5 mr-2"></i>
+                                添加模型
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div id="models-list" class="grid gap-6"></div>
+                </div>
+
+                <!-- Knowledge Section -->
+                <div id="knowledge-section" class="section-content hidden">
+                    <div class="mb-8">
+                        <h2 class="text-3xl font-bold text-gray-900 mb-2">知识库管理</h2>
+                        <p class="text-gray-600">上传和管理用于RAG检索的文档</p>
+                    </div>
+                    
+                    <!-- 上传操作按钮 -->
+                    <div class="flex flex-wrap gap-4 mb-8">
+                        <button id="open-file-modal" class="btn-primary px-6 py-3 text-white font-semibold rounded-xl">
+                            <i data-lucide="upload" class="inline w-5 h-5 mr-2"></i>
+                            上传文件
+                        </button>
+                        <button id="open-text-modal" class="btn-secondary px-6 py-3 text-gray-700 bg-gray-100 hover:bg-gray-200 font-semibold rounded-xl">
+                            <i data-lucide="edit-3" class="inline w-5 h-5 mr-2"></i>
+                            添加文本
+                        </button>
+                    </div>
+                    
+                    <!-- Files List -->
+                    <div class="glass-card rounded-2xl p-6">
+                        <h3 class="text-xl font-semibold text-gray-900 mb-6 flex items-center">
+                            <i data-lucide="files" class="w-5 h-5 mr-2"></i>
+                            知识库文件
+                        </h3>
+                        <div id="files-list" class="space-y-4"></div>
+                        
+                        <!-- 分页控件 -->
+                        <div id="files-pagination" class="flex items-center justify-between mt-6 hidden">
+                            <div class="text-sm text-gray-500">
+                                显示第 <span id="files-start">1</span> - <span id="files-end">10</span> 条，共 <span id="files-total">0</span> 条
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <button id="files-prev" class="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                    <i data-lucide="chevron-left" class="w-4 h-4"></i>
+                                </button>
+                                <div id="files-page-numbers" class="flex items-center space-x-1">
+                                    <!-- 页码按钮动态生成 -->
+                                </div>
+                                <button id="files-next" class="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                                    <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Configs Section -->
+                <div id="configs-section" class="section-content hidden">
+                    <div class="mb-8">
+                        <h2 class="text-3xl font-bold text-gray-900 mb-2">系统配置</h2>
+                        <p class="text-gray-600">配置AI模型和RAG检索参数</p>
+                    </div>
+                    
+                    <div class="grid md:grid-cols-2 gap-8">
+                        <!-- AI Config -->
+                        <div class="glass-card rounded-2xl p-6">
+                            <h3 class="text-xl font-semibold text-gray-900 mb-6 flex items-center">
+                                <i data-lucide="brain" class="w-5 h-5 mr-2"></i>
+                                AI 模型配置
+                            </h3>
+                            
+                            <form id="ai-config-form" class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-700 mb-2">BaseURL</label>
+                                    <input type="text" id="ai-baseurl" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="https://api.siliconflow.cn">
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-700 mb-2">API Key</label>
+                                    <input type="password" id="ai-apikey" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="输入 API 密钥">
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-700 mb-2">模型名称</label>
+                                    <input type="text" id="ai-model" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="Qwen/QwQ-32B">
+                                </div>
+                                
+                                <button type="submit" class="w-full bg-green-600 hover:bg-green-700 py-3 text-white font-semibold rounded-xl transition-colors duration-200">
+                                    保存配置
+                                </button>
+                            </form>
+                        </div>
+                        
+                        <!-- RAG Config -->
+                        <div class="glass-card rounded-2xl p-6">
+                            <h3 class="text-xl font-semibold text-gray-900 mb-6 flex items-center">
+                                <i data-lucide="search" class="w-5 h-5 mr-2"></i>
+                                RAG 检索配置
+                            </h3>
+                            
+                            <form id="rag-config-form" class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-700 mb-2">BaseURL</label>
+                                    <input type="text" id="rag-baseurl" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="https://api.siliconflow.cn">
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-700 mb-2">API Key</label>
+                                    <input type="password" id="rag-apikey" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="输入 API 密钥">
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-700 mb-2">嵌入模型</label>
+                                    <input type="text" id="rag-model" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="BAAI/bge-large-zh-v1.5">
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-700 mb-2">Rerank 模型</label>
+                                    <input type="text" id="rag-rerank-model" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="BAAI/bge-reranker-v2-m3">
+                                </div>
+                                
+                                <button type="submit" class="w-full bg-green-600 hover:bg-green-700 py-3 text-white font-semibold rounded-xl transition-colors duration-200">
+                                    保存配置
+                                </button>
+                            </form>
+                        </div>
+                        
+                        <!-- System Settings -->
+                        <div class="glass-card rounded-2xl p-6 md:col-span-2">
+                            <h3 class="text-xl font-semibold text-gray-900 mb-6 flex items-center">
+                                <i data-lucide="settings" class="w-5 h-5 mr-2"></i>
+                                系统设置
+                            </h3>
+                            
+                            <form id="system-config-form" class="grid md:grid-cols-2 gap-6">
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-700 mb-2">最大对话数</label>
+                                    <input type="number" id="max-messages" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" value="20" min="1" max="100">
+                                </div>
+                                
+                                <div class="flex items-center space-x-3">
+                                    <input type="checkbox" id="enable-image" class="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500">
+                                    <label for="enable-image" class="text-sm font-semibold text-gray-700">启用图像生成功能</label>
+                                </div>
+                                
+                                <div class="md:col-span-2">
+                                    <button type="submit" class="bg-green-600 hover:bg-green-700 px-8 py-3 text-white font-semibold rounded-xl transition-colors duration-200">
+                                        保存系统设置
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Keys Section -->
+                <div id="keys-section" class="section-content hidden">
+                    <div class="mb-8">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h2 class="text-3xl font-bold text-gray-900 mb-2">API密钥管理</h2>
+                                <p class="text-gray-600">生成和管理用于API访问的密钥</p>
+                            </div>
+                            <button id="generate-key-btn" class="btn-primary px-6 py-3 text-white font-semibold rounded-xl">
+                                <i data-lucide="plus" class="inline w-5 h-5 mr-2"></i>
+                                生成新密钥
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="glass-card rounded-2xl p-6">
+                        <div id="api-keys-list" class="space-y-4"></div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- Modal -->
+    <div id="modal-overlay" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div class="glass-card rounded-2xl p-6 w-full max-w-md transform transition-all duration-300 scale-95 opacity-0" id="modal-content">
+            <div class="flex items-center justify-between mb-6">
+                <h3 id="modal-title" class="text-xl font-semibold text-gray-900">标题</h3>
+                <button id="modal-close" class="text-gray-400 hover:text-gray-600 transition-colors duration-200">
+                    <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            
+            <div id="modal-body" class="space-y-4">
+                <!-- 模态框内容将在这里动态插入 -->
+            </div>
+            
+            <div class="flex justify-end space-x-3 mt-6">
+                <button id="modal-cancel" class="px-4 py-2 text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors duration-200">
+                    取消
+                </button>
+                <button id="modal-confirm" class="btn-primary px-6 py-2 text-white rounded-lg">
+                    确定
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 文件上传模态框 -->
+    <div id="file-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div class="glass-card rounded-2xl p-6 w-full max-w-2xl transform transition-all duration-300 scale-95 opacity-0" id="file-modal-content">
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-xl font-semibold text-gray-900">上传文件</h3>
+                <button id="file-modal-close" class="text-gray-400 hover:text-gray-600 transition-colors duration-200">
+                    <i data-lucide="x" class="w-6 h-6"></i>
+                </button>
+            </div>
+            
+            <input type="file" id="modal-file-upload" class="hidden" accept=".txt,.pdf,.docx,.md" multiple>
+            <div class="upload-zone rounded-xl p-8 text-center mb-4 cursor-pointer" id="modal-drop-zone" onclick="document.getElementById('modal-file-upload').click()">
+                <div class="mb-4">
+                    <i data-lucide="cloud-upload" class="w-16 h-16 text-gray-400 mx-auto mb-4"></i>
+                    <p class="text-lg font-medium text-gray-700 mb-2">拖拽文件到此处</p>
+                    <p class="text-gray-500">或点击选择文件</p>
+                    <p class="text-sm text-gray-400 mt-2">支持 TXT、PDF、DOCX、MD 格式（可多选）</p>
+                </div>
+                
+                <!-- 选中文件预览 -->
+                <div id="modal-selected-files" class="hidden">
+                    <div class="mt-4 p-4 bg-blue-50 rounded-lg">
+                        <p class="text-sm font-medium text-blue-800 mb-2">已选择文件:</p>
+                        <div id="modal-file-list" class="space-y-1"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="flex justify-end space-x-3">
+                <button id="file-modal-cancel" class="px-4 py-2 text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors duration-200">
+                    取消
+                </button>
+                <button id="modal-upload-file-btn" class="btn-primary px-6 py-3 text-white rounded-xl">
+                    <i data-lucide="upload-cloud" class="inline w-5 h-5 mr-2"></i>
+                    上传文件
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 文本添加模态框 -->
+    <div id="text-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div class="glass-card rounded-2xl p-6 w-full max-w-2xl transform transition-all duration-300 scale-95 opacity-0" id="text-modal-content">
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-xl font-semibold text-gray-900">添加文本</h3>
+                <button id="text-modal-close" class="text-gray-400 hover:text-gray-600 transition-colors duration-200">
+                    <i data-lucide="x" class="w-6 h-6"></i>
+                </button>
+            </div>
+            
+            <div class="mb-6">
+                <label class="block text-sm font-semibold text-gray-700 mb-2">文本内容</label>
+                <textarea id="modal-text-upload" class="w-full h-48 p-4 border border-gray-200 rounded-xl resize-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="输入要添加到知识库的文本内容..."></textarea>
+            </div>
+            
+            <div class="flex justify-end space-x-3">
+                <button id="text-modal-cancel" class="px-4 py-2 text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors duration-200">
+                    取消
+                </button>
+                <button id="modal-upload-text-btn" class="btn-primary px-6 py-3 text-white rounded-xl">
+                    <i data-lucide="plus-circle" class="inline w-5 h-5 mr-2"></i>
+                    添加文本
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 自定义确认对话框 -->
+    <div id="confirm-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div class="glass-card rounded-2xl p-6 w-full max-w-md transform transition-all duration-300 scale-95 opacity-0" id="confirm-modal-content">
+            <div class="flex items-center mb-4">
+                <div class="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mr-4">
+                    <i data-lucide="alert-triangle" class="w-6 h-6 text-red-600"></i>
+                </div>
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-900" id="confirm-title">确认操作</h3>
+                    <p class="text-sm text-gray-600" id="confirm-message">确定要执行此操作吗？</p>
+                </div>
+            </div>
+            
+            <div class="flex justify-end space-x-3 mt-6">
+                <button id="confirm-cancel" class="px-4 py-2 text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors duration-200">
+                    取消
+                </button>
+                <button id="confirm-ok" class="bg-red-600 hover:bg-red-700 px-6 py-2 text-white rounded-lg transition-colors duration-200">
+                    确定
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification -->
+    <div id="notification" class="notification"></div>
+
+    <script src="app.js"></script>
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+        
+        // Navigation functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            const navItems = document.querySelectorAll('.nav-item');
+            const sections = document.querySelectorAll('.section-content');
+            
+            navItems.forEach(item => {
+                item.addEventListener('click', function() {
+                    const section = this.dataset.section;
+                    
+                    // Update active nav item
+                    navItems.forEach(nav => nav.classList.remove('active'));
+                    this.classList.add('active');
+                    
+                    // Show corresponding section
+                    sections.forEach(sec => sec.classList.add('hidden'));
+                    document.getElementById(section + '-section').classList.remove('hidden');
+                });
+            });
+            
+            // File upload drag and drop (Legacy - skip if elements don't exist)
+            const uploadZone = document.querySelector('.upload-zone');
+            const fileInput = document.getElementById('file-upload');
+            
+            if (uploadZone && fileInput) {
+                uploadZone.addEventListener('click', () => fileInput.click());
+                
+                uploadZone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    uploadZone.classList.add('dragover');
+                });
+                
+                uploadZone.addEventListener('dragleave', (e) => {
+                    e.preventDefault();
+                    uploadZone.classList.remove('dragover');
+                });
+                
+                uploadZone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    uploadZone.classList.remove('dragover');
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        fileInput.files = files;
+                    }
+                });
+            }
+        });
+    </script>
+</body>
+</html>

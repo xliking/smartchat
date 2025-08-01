@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(set HTTP_PROXY=http://127.0.0.1:7897)",
+      "Bash(set HTTPS_PROXY=http://127.0.0.1:7897)",
+      "Bash(copy:*)",
+      "Bash(cp:*)",
+      "Bash(rm:*)",
+      "Bash(wrangler auth:*)",
+      "Bash(wrangler login:*)",
+      "Bash($env:HTTP_PROXY=\"http://127.0.0.1:7897\")",
+      "Bash($env:HTTPS_PROXY=\"http://127.0.0.1:7897\")",
+      "Bash(ls:*)",
+      "Bash(find:*)",
+      "Bash(del \"C:\\Users\\Administrator\\Desktop\\auth\\deploy.bat\")"
+    ],
+    "deny": []
+  }
+}

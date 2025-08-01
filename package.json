@@ -1,0 +1,26 @@
+{
+  "name": "ai-gateway",
+  "version": "1.0.0",
+  "description": "Cloudflare Workers AI Gateway with RAG",
+  "main": "index.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler publish",
+    "tail": "wrangler tail"
+  },
+  "dependencies": {
+    "nanoid": "^3.3.7"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  },
+  "keywords": [
+    "cloudflare",
+    "workers",
+    "ai",
+    "rag",
+    "gateway"
+  ],
+  "author": "",
+  "license": "MIT"
+}

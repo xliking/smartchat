@@ -1,0 +1,9 @@
+name = "ai-gateway-pages"
+compatibility_date = "2024-01-01"
+
+# Pages 配置
+pages_build_output_dir = "."
+
+# 环境变量
+[vars]
+API_BASE_URL = "https://ai-gateway.2190418744.workers.dev"
