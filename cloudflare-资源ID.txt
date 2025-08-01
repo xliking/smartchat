@@ -16,21 +16,3 @@ ID: 5d41a451ec284a21816b8d096b090e71
 名称: ai-gateway-files
 绑定: AI_R2
 桶名: ai-gateway-files
-
-## 完整配置参考:
-
-[[kv_namespaces]]
-binding = "AI_KV"
-id = "5d41a451ec284a21816b8d096b090e71"
-
-[[d1_databases]]
-binding = "AI_DB"
-database_name = "ai-gateway-db"
-database_id = "04dbf4e0-a32d-4802-b493-8301a9a72a94"
-
-[[r2_buckets]]
-binding = "AI_R2"
-bucket_name = "ai-gateway-files"
-
-## 重要提醒:
-请妥善保存此文件，包含了项目的所有重要资源 ID！

@@ -1,44 +1,26 @@
 @echo off
+echo ======================================== 
+echo    AI Gateway 一键部署脚本
 echo ========================================
-echo AI Gateway Deploy Script
-echo ========================================
-
-rem Set proxy and API token
-set HTTP_PROXY=http://127.0.0.1:7897
-set HTTPS_PROXY=http://127.0.0.1:7897
-set CLOUDFLARE_API_TOKEN=7Ch2Q6UfsV56DvnyqUzyET7jY8xCXOg8bY7jjJ_g
-
-echo 1. Migrating database...
-wrangler d1 execute ai-gateway-db --file=./migrate.sql
-if %errorlevel% neq 0 (
-    echo Database migration failed, but continuing...
-)
+echo.
+echo [1/3] 检查环境...
+where wrangler >nul 2>&1 || (echo 请先安装: npm install -g wrangler && pause && exit)
+echo ✅ 环境检查通过
 
 echo.
-echo 2. Deploying Workers...
+echo [2/3] 创建资源...
+wrangler kv:namespace create "AI_KV"
+wrangler d1 create ai-gateway-db  
+wrangler r2 bucket create ai-gateway-files
+echo ✅ 资源创建完成
+
+echo.
+echo [3/3] 部署服务...
+wrangler d1 execute ai-gateway-db --file=./complete-setup.sql
 wrangler deploy
-if %errorlevel% neq 0 (
-    echo Workers deploy failed!
-    echo Press any key to close...
-    pause >nul
-    exit /b 1
-)
+wrangler pages deploy . --project-name ai-gateway-admin
+echo ✅ 部署完成
 
 echo.
-echo 3. Deploying Pages...
-wrangler pages deploy . --project-name ai-gateway-pages
-if %errorlevel% neq 0 (
-    echo Pages deploy failed!
-    echo Press any key to close...
-    pause >nul
-    exit /b 1
-)
-
-echo.
-echo ========================================
-echo Deploy completed!
-echo Workers: https://ai-gateway.2190418744.workers.dev
-echo Pages: https://ai-gateway-pages.pages.dev
-echo ========================================
-echo Press any key to close...
-pause >nul
+echo 🎉 成功！请访问管理界面进行配置
+pause
