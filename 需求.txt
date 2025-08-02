@@ -13,3 +13,5 @@
                                  对外就是 我设置的workers 的请求路径 + /v1/chat/completions 当做 BaseUrl,ApiKey 就是我可以自定义的sk,model 就是第 9 步骤自定义的model
                                  其实 workers 的作用就是 充当 中转，内部 实现了 RAG，重排序，绘画，对话 等等，再把生成的结果按照要求返回给我
 （11） workers 的页面需要好看，简约大气，一定要好看美观，功能要完整！！！
+
+

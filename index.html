@@ -250,6 +250,47 @@
                 opacity: 0;
             }
         }
+
+        /* Toggle Switch Styles */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 24px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        input:checked + .slider {
+            background-color: #4f46e5;
+        }
+        input:checked + .slider:before {
+            transform: translateX(20px);
+        }
     </style>
 </head>
 <body class="bg-gray-50">
@@ -376,6 +417,14 @@
                             <path d="M12 1v6m0 6v6m11-7h-6m-6 0H1m15.5-6.5-4.5 4.5m0 0-4.5 4.5m0-9 4.5 4.5"/>
                         </svg>
                         系统配置
+                    </div>
+                    <div class="nav-item px-4 py-3 rounded-lg cursor-pointer" data-section="notion">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-right: 0.75rem;">
+                            <path d="M4 4v16l4-4 4 4 4-4 4 4V4"/>
+                            <path d="M4 8h16"/>
+                            <path d="M4 12h16"/>
+                        </svg>
+                        Notion集成
                     </div>
                     <div class="nav-item px-4 py-3 rounded-lg cursor-pointer" data-section="keys">
                         <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-right: 0.75rem;">
@@ -732,6 +781,280 @@
                         <div id="api-keys-list" class="space-y-4"></div>
                     </div>
                 </div>
+
+                <!-- Notion Integration Section -->
+                <div id="notion-section" class="section-content hidden">
+                    <div class="mb-8">
+                        <h2 class="text-3xl font-bold text-gray-900 mb-2">Notion集成</h2>
+                        <p class="text-gray-600">连接Notion工作区，实现智能文档管理和知识库同步</p>
+                    </div>
+
+                    <!-- Connection Status -->
+                    <div class="glass-card rounded-2xl p-6 mb-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="flex items-center">
+                                <div id="notion-status-icon" class="w-3 h-3 bg-red-500 rounded-full mr-3"></div>
+                                <h3 class="text-lg font-semibold text-gray-900">连接状态</h3>
+                            </div>
+                            <span id="notion-status-text" class="text-sm text-red-600 font-medium">未连接</span>
+                        </div>
+                        
+                        <div id="notion-config" class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">Notion Integration Token</label>
+                                <input type="password" id="notion-token" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="ntn_xxxxxxxxxxxxxxxxx 或 secret_xxxxxxxxxxxxxxxxx">
+                                <p class="text-xs text-gray-500 mt-1">在 <a href="https://www.notion.so/my-integrations" target="_blank" class="text-indigo-600 hover:text-indigo-700">notion.so/my-integrations</a> 创建集成获取内部集成密钥</p>
+                            </div>
+                            
+                            <div class="flex space-x-3">
+                                <button id="notion-connect-btn" class="btn-primary px-6 py-3 text-white rounded-xl">
+                                    <i data-lucide="link" class="inline w-5 h-5 mr-2"></i>
+                                    连接Notion
+                                </button>
+                                <button id="notion-disconnect-btn" class="hidden px-6 py-3 text-red-600 border border-red-300 rounded-xl hover:bg-red-50">
+                                    <i data-lucide="unlink" class="inline w-5 h-5 mr-2"></i>
+                                    断开连接
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Feature Tabs -->
+                    <div class="glass-card rounded-2xl p-6">
+                        <div class="border-b border-gray-200 mb-6">
+                            <nav class="flex space-x-8">
+                                <button class="notion-tab-btn active border-b-2 border-indigo-500 text-indigo-600 pb-3 px-1 text-sm font-medium" data-tab="sync">
+                                    <i data-lucide="refresh-cw" class="inline w-4 h-4 mr-2"></i>
+                                    数据同步
+                                </button>
+                                <button class="notion-tab-btn text-gray-500 hover:text-gray-700 border-b-2 border-transparent pb-3 px-1 text-sm font-medium" data-tab="workflow">
+                                    <i data-lucide="zap" class="inline w-4 h-4 mr-2"></i>
+                                    工作流
+                                </button>
+                                <button class="notion-tab-btn text-gray-500 hover:text-gray-700 border-b-2 border-transparent pb-3 px-1 text-sm font-medium" data-tab="pages">
+                                    <i data-lucide="file-text" class="inline w-4 h-4 mr-2"></i>
+                                    页面管理
+                                </button>
+                                <button class="notion-tab-btn text-gray-500 hover:text-gray-700 border-b-2 border-transparent pb-3 px-1 text-sm font-medium" data-tab="databases">
+                                    <i data-lucide="database" class="inline w-4 h-4 mr-2"></i>
+                                    数据库
+                                </button>
+                            </nav>
+                        </div>
+
+                        <!-- Data Sync Tab -->
+                        <div id="notion-tab-sync" class="notion-tab-content">
+                            <div class="grid md:grid-cols-2 gap-6">
+                                <!-- Auto Sync Settings -->
+                                <div class="space-y-4">
+                                    <h4 class="text-lg font-semibold text-gray-900">自动同步设置</h4>
+                                    
+                                    <div class="space-y-3">
+                                        <label class="flex items-center">
+                                            <input type="checkbox" id="auto-sync-enabled" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                            <span class="ml-2 text-sm text-gray-700">启用自动同步</span>
+                                        </label>
+                                        
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-1">同步间隔</label>
+                                            <select id="sync-interval" class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500">
+                                                <option value="3600">1小时</option>
+                                                <option value="21600">6小时</option>
+                                                <option value="43200">12小时</option>
+                                                <option value="86400" selected>24小时</option>
+                                            </select>
+                                        </div>
+                                        
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-1">同步的数据库</label>
+                                            <div id="sync-databases-list" class="space-y-2 max-h-32 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                                                <p class="text-sm text-gray-500">请先连接Notion获取数据库列表</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <button id="save-sync-settings-btn" class="w-full btn-primary py-3 text-white rounded-xl">
+                                        <i data-lucide="save" class="inline w-5 h-5 mr-2"></i>
+                                        保存同步设置
+                                    </button>
+                                </div>
+                                
+                                <!-- Manual Sync -->
+                                <div class="space-y-4">
+                                    <h4 class="text-lg font-semibold text-gray-900">手动同步</h4>
+                                    
+                                    <div class="space-y-3">
+                                        <button id="sync-all-btn" class="w-full px-4 py-3 bg-blue-50 text-blue-700 border border-blue-200 rounded-xl hover:bg-blue-100 transition-colors">
+                                            <i data-lucide="download" class="inline w-5 h-5 mr-2"></i>
+                                            同步所有页面到RAG
+                                        </button>
+                                        
+                                        <button id="selective-sync-btn" class="w-full px-4 py-3 bg-green-50 text-green-700 border border-green-200 rounded-xl hover:bg-green-100 transition-colors">
+                                            <i data-lucide="filter" class="inline w-5 h-5 mr-2"></i>
+                                            选择性同步
+                                        </button>
+                                        
+                                        <button id="check-updates-btn" class="w-full px-4 py-3 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl hover:bg-purple-100 transition-colors">
+                                            <i data-lucide="search" class="inline w-5 h-5 mr-2"></i>
+                                            检查更新
+                                        </button>
+                                        
+                                        <button id="fix-embeddings-btn" class="w-full px-4 py-3 bg-orange-50 text-orange-700 border border-orange-200 rounded-xl hover:bg-orange-100 transition-colors">
+                                            <i data-lucide="wrench" class="inline w-5 h-5 mr-2"></i>
+                                            修复Embedding
+                                        </button>
+                                    </div>
+                                    
+                                    <!-- Sync Status -->
+                                    <div id="sync-status" class="hidden p-4 bg-gray-50 rounded-xl">
+                                        <div class="flex items-center mb-2">
+                                            <i data-lucide="loader" class="w-5 h-5 text-indigo-600 animate-spin mr-2"></i>
+                                            <span class="text-sm font-medium text-gray-900">正在同步...</span>
+                                        </div>
+                                        <div class="w-full bg-gray-200 rounded-full h-2">
+                                            <div id="sync-progress" class="bg-indigo-600 h-2 rounded-full" style="width: 0%"></div>
+                                        </div>
+                                        <p id="sync-status-text" class="text-xs text-gray-600 mt-1">准备中...</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Workflow Tab -->
+                        <div id="notion-tab-workflow" class="notion-tab-content hidden">
+                            <h4 class="text-lg font-semibold text-gray-900 mb-4">智能工作流配置</h4>
+                            
+                            <div class="space-y-6">
+                                <!-- Auto Page Creation -->
+                                <div class="border border-gray-200 rounded-xl p-4">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <h5 class="font-medium text-gray-900">自动创建页面</h5>
+                                        <label class="switch">
+                                            <input type="checkbox" id="auto-create-pages">
+                                            <span class="slider"></span>
+                                        </label>
+                                    </div>
+                                    <p class="text-sm text-gray-600 mb-3">当AI对话中提到创建文档时自动在Notion中创建页面</p>
+                                    
+                                    <div class="grid md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-1">目标数据库</label>
+                                            <select id="auto-create-database" class="w-full px-3 py-2 border border-gray-200 rounded-lg">
+                                                <option value="">选择数据库</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-1">触发关键词</label>
+                                            <input type="text" id="create-keywords" class="w-full px-3 py-2 border border-gray-200 rounded-lg" placeholder="创建,新建,记录" value="创建,新建,记录">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Auto Update -->
+                                <div class="border border-gray-200 rounded-xl p-4">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <h5 class="font-medium text-gray-900">智能更新页面</h5>
+                                        <label class="switch">
+                                            <input type="checkbox" id="auto-update-pages">
+                                            <span class="slider"></span>
+                                        </label>
+                                    </div>
+                                    <p class="text-sm text-gray-600 mb-3">AI可以根据对话内容自动更新相关的Notion页面</p>
+                                    
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">更新策略</label>
+                                        <select id="update-strategy" class="w-full px-3 py-2 border border-gray-200 rounded-lg">
+                                            <option value="append">追加内容</option>
+                                            <option value="replace">替换内容</option>
+                                            <option value="smart">智能合并</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                
+                                <!-- Meeting Notes -->
+                                <div class="border border-gray-200 rounded-xl p-4">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <h5 class="font-medium text-gray-900">会议记录助手</h5>
+                                        <label class="switch">
+                                            <input type="checkbox" id="meeting-notes-enabled">
+                                            <span class="slider"></span>
+                                        </label>
+                                    </div>
+                                    <p class="text-sm text-gray-600 mb-3">自动识别会议内容并生成结构化的Notion会议记录</p>
+                                    
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">会议记录模板</label>
+                                        <select id="meeting-template" class="w-full px-3 py-2 border border-gray-200 rounded-lg">
+                                            <option value="">选择模板</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <button id="save-workflow-btn" class="w-full mt-6 btn-primary py-3 text-white rounded-xl">
+                                <i data-lucide="save" class="inline w-5 h-5 mr-2"></i>
+                                保存工作流设置
+                            </button>
+                        </div>
+
+                        <!-- Pages Management Tab -->
+                        <div id="notion-tab-pages" class="notion-tab-content hidden">
+                            <div class="flex items-center justify-between mb-4">
+                                <h4 class="text-lg font-semibold text-gray-900">页面管理</h4>
+                                <div class="flex space-x-2">
+                                    <button id="refresh-pages-btn" class="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
+                                        <i data-lucide="refresh-cw" class="inline w-4 h-4 mr-1"></i>
+                                        刷新
+                                    </button>
+                                    <button id="create-page-btn" class="btn-primary px-4 py-2 text-white rounded-lg">
+                                        <i data-lucide="plus" class="inline w-4 h-4 mr-1"></i>
+                                        新建页面
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Search and Filter -->
+                            <div class="flex space-x-4 mb-4">
+                                <div class="flex-1">
+                                    <input type="text" id="page-search" class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500" placeholder="搜索页面...">
+                                </div>
+                                <select id="page-filter" class="px-4 py-2 border border-gray-200 rounded-lg">
+                                    <option value="all">所有页面</option>
+                                    <option value="synced">已同步</option>
+                                    <option value="modified">已修改</option>
+                                    <option value="new">新页面</option>
+                                </select>
+                            </div>
+                            
+                            <!-- Pages List -->
+                            <div id="notion-pages-list" class="space-y-3 max-h-96 overflow-y-auto">
+                                <div class="flex items-center justify-center py-8 text-gray-500">
+                                    <i data-lucide="file-text" class="w-8 h-8 mr-2"></i>
+                                    <span>请先连接Notion获取页面列表</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Databases Tab -->
+                        <div id="notion-tab-databases" class="notion-tab-content hidden">
+                            <div class="flex items-center justify-between mb-4">
+                                <h4 class="text-lg font-semibold text-gray-900">数据库管理</h4>
+                                <button id="refresh-databases-btn" class="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
+                                    <i data-lucide="refresh-cw" class="inline w-4 h-4 mr-1"></i>
+                                    刷新
+                                </button>
+                            </div>
+                            
+                            <!-- Databases List -->
+                            <div id="notion-databases-list" class="space-y-4">
+                                <div class="flex items-center justify-center py-8 text-gray-500">
+                                    <i data-lucide="database" class="w-8 h-8 mr-2"></i>
+                                    <span>请先连接Notion获取数据库列表</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </main>
         </div>
     </div>
@@ -879,6 +1202,19 @@
                     // Show corresponding section
                     sections.forEach(sec => sec.classList.add('hidden'));
                     document.getElementById(section + '-section').classList.remove('hidden');
+                    
+                    // Special handling for Notion section
+                    if (section === 'notion') {
+                        // Check if Notion is connected and load settings
+                        if (typeof checkNotionConnection === 'function') {
+                            checkNotionConnection();
+                        }
+                        if (typeof loadNotionSettings === 'function') {
+                            setTimeout(() => {
+                                loadNotionSettings();
+                            }, 500);
+                        }
+                    }
                 });
             });
             

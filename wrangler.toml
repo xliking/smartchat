@@ -24,3 +24,7 @@ ENVIRONMENT = "production"
 
 # 兼容性标志
 compatibility_flags = ["nodejs_compat"]
+
+# 定时任务（Cron Triggers）
+[triggers]
+crons = ["0 */6 * * *"]  # 每6小时执行一次Notion同步

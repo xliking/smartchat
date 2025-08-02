@@ -12,7 +12,12 @@
       "Bash($env:HTTPS_PROXY=\"http://127.0.0.1:7897\")",
       "Bash(ls:*)",
       "Bash(find:*)",
-      "Bash(del \"C:\\Users\\Administrator\\Desktop\\auth\\deploy.bat\")"
+      "Bash(del \"C:\\Users\\Administrator\\Desktop\\auth\\deploy.bat\")",
+      "WebFetch(domain:developers.notion.com)",
+      "Bash(npm run deploy:*)",
+      "Bash(wrangler deploy:*)",
+      "Bash(wrangler pages deploy:*)",
+      "Bash(wrangler pages project:*)"
     ],
     "deny": []
   }

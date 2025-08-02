@@ -70,6 +70,9 @@ async function handleRequest(request, env) {
         if (path === "/api/statistics") {
             return handleStatistics(request, env, corsHeaders);
         }
+        if (path.startsWith("/api/notion/")) {
+            return handleNotion(request, env, corsHeaders, path);
+        }
         if (path === "/v1/chat/completions") {
             return handleChatCompletions(request, env, corsHeaders);
         }
@@ -853,7 +856,914 @@ function cosineSimilarity(a, b) {
     return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 __name(cosineSimilarity, "cosineSimilarity");
+
+// =============================================================================
+// Notion MCP Integration Handlers
+// =============================================================================
+
+async function handleNotion(request, env, corsHeaders, path) {
+    const headers = { ...corsHeaders, "Content-Type": "application/json" };
+    
+    if (!await verifyAdmin(request, env)) {
+        return new Response(JSON.stringify({ error: "未授权" }), {
+            status: 401,
+            headers
+        });
+    }
+
+    const pathSegment = path.replace("/api/notion/", "");
+
+    try {
+        switch (pathSegment) {
+            case "connect":
+                return handleNotionConnect(request, env, headers);
+            case "disconnect":
+                return handleNotionDisconnect(request, env, headers);
+            case "databases":
+                return handleNotionDatabases(request, env, headers);
+            case "pages":
+                return handleNotionPages(request, env, headers);
+            case "sync-all":
+                return handleNotionSyncAll(request, env, headers);
+            case "check-updates":
+                return handleNotionCheckUpdates(request, env, headers);
+            case "status":
+                return handleNotionStatus(request, env, headers);
+            case "fix-embeddings":
+                return handleFixEmbeddings(request, env, headers);
+            case "save-sync-settings":
+                return handleSaveSyncSettings(request, env, headers);
+            case "save-workflow-settings":
+                return handleSaveWorkflowSettings(request, env, headers);
+            case "get-sync-settings":
+                return handleGetSyncSettings(request, env, headers);
+            case "get-workflow-settings":
+                return handleGetWorkflowSettings(request, env, headers);
+            default:
+                return new Response(JSON.stringify({ error: "Notion API endpoint not found" }), {
+                    status: 404,
+                    headers
+                });
+        }
+    } catch (error) {
+        console.error("Notion API error:", error);
+        return new Response(JSON.stringify({ error: "Notion服务错误" }), {
+            status: 500,
+            headers
+        });
+    }
+}
+__name(handleNotion, "handleNotion");
+
+async function handleNotionConnect(request, env, headers) {
+    if (request.method !== "POST") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), {
+            status: 405,
+            headers
+        });
+    }
+
+    try {
+        const { token } = await request.json();
+        
+        if (!token || !(token.startsWith('secret_') || token.startsWith('ntn_'))) {
+            return new Response(JSON.stringify({ error: "无效的Notion Integration Token" }), {
+                status: 400,
+                headers
+            });
+        }
+
+        // Test the token by fetching user info
+        const testResponse = await fetch('https://api.notion.com/v1/users/me', {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Notion-Version': '2022-06-28'
+            }
+        });
+
+        if (!testResponse.ok) {
+            return new Response(JSON.stringify({ error: "Token验证失败，请检查Token是否正确" }), {
+                status: 400,
+                headers
+            });
+        }
+
+        const userInfo = await testResponse.json();
+
+        // Store the token in KV
+        await env.AI_KV.put("NOTION_TOKEN", token);
+        await env.AI_KV.put("NOTION_USER", JSON.stringify(userInfo));
+
+        return new Response(JSON.stringify({ 
+            success: true, 
+            user: userInfo,
+            message: "Notion连接成功" 
+        }), { headers });
+
+    } catch (error) {
+        console.error("Notion connect error:", error);
+        return new Response(JSON.stringify({ error: "连接过程中发生错误" }), {
+            status: 500,
+            headers
+        });
+    }
+}
+__name(handleNotionConnect, "handleNotionConnect");
+
+async function handleNotionDisconnect(request, env, headers) {
+    if (request.method !== "POST") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), {
+            status: 405,
+            headers
+        });
+    }
+
+    try {
+        // Remove stored token and user info
+        await env.AI_KV.delete("NOTION_TOKEN");
+        await env.AI_KV.delete("NOTION_USER");
+        await env.AI_KV.delete("NOTION_DATABASES");
+        await env.AI_KV.delete("NOTION_PAGES");
+
+        return new Response(JSON.stringify({ 
+            success: true,
+            message: "已断开Notion连接" 
+        }), { headers });
+
+    } catch (error) {
+        console.error("Notion disconnect error:", error);
+        return new Response(JSON.stringify({ error: "断开连接时发生错误" }), {
+            status: 500,
+            headers
+        });
+    }
+}
+__name(handleNotionDisconnect, "handleNotionDisconnect");
+
+async function handleNotionDatabases(request, env, headers) {
+    if (request.method !== "GET") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), {
+            status: 405,
+            headers
+        });
+    }
+
+    try {
+        const token = await env.AI_KV.get("NOTION_TOKEN");
+        
+        if (!token) {
+            return new Response(JSON.stringify({ error: "未连接Notion" }), {
+                status: 400,
+                headers
+            });
+        }
+
+        // Fetch databases from Notion API
+        const response = await fetch('https://api.notion.com/v1/search', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Notion-Version': '2022-06-28',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                filter: {
+                    value: "database",
+                    property: "object"
+                }
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error("获取数据库列表失败");
+        }
+
+        const data = await response.json();
+        const databases = data.results.map(db => ({
+            id: db.id,
+            title: db.title?.[0]?.plain_text || "无标题数据库",
+            url: db.url,
+            created_time: db.created_time,
+            last_edited_time: db.last_edited_time
+        }));
+
+        // Cache databases
+        await env.AI_KV.put("NOTION_DATABASES", JSON.stringify(databases));
+
+        return new Response(JSON.stringify({ databases }), { headers });
+
+    } catch (error) {
+        console.error("Notion databases error:", error);
+        return new Response(JSON.stringify({ error: "获取数据库列表失败" }), {
+            status: 500,
+            headers
+        });
+    }
+}
+__name(handleNotionDatabases, "handleNotionDatabases");
+
+async function handleNotionPages(request, env, headers) {
+    if (request.method !== "GET") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), {
+            status: 405,
+            headers
+        });
+    }
+
+    try {
+        const token = await env.AI_KV.get("NOTION_TOKEN");
+        
+        if (!token) {
+            return new Response(JSON.stringify({ error: "未连接Notion" }), {
+                status: 400,
+                headers
+            });
+        }
+
+        // Fetch pages from Notion API
+        const response = await fetch('https://api.notion.com/v1/search', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Notion-Version': '2022-06-28',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                filter: {
+                    value: "page",
+                    property: "object"
+                },
+                page_size: 100
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error("获取页面列表失败");
+        }
+
+        const data = await response.json();
+        const pages = data.results.map(page => ({
+            id: page.id,
+            title: extractPageTitle(page),
+            url: page.url,
+            created_time: page.created_time,
+            last_edited_time: page.last_edited_time,
+            parent: page.parent
+        }));
+
+        // Cache pages
+        await env.AI_KV.put("NOTION_PAGES", JSON.stringify(pages));
+
+        return new Response(JSON.stringify({ pages }), { headers });
+
+    } catch (error) {
+        console.error("Notion pages error:", error);
+        return new Response(JSON.stringify({ error: "获取页面列表失败" }), {
+            status: 500,
+            headers
+        });
+    }
+}
+__name(handleNotionPages, "handleNotionPages");
+
+async function handleNotionSyncAll(request, env, headers) {
+    if (request.method !== "POST") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), {
+            status: 405,
+            headers
+        });
+    }
+
+    try {
+        const token = await env.AI_KV.get("NOTION_TOKEN");
+        
+        if (!token) {
+            return new Response(JSON.stringify({ error: "未连接Notion" }), {
+                status: 400,
+                headers
+            });
+        }
+
+        // Get cached pages
+        const pagesData = await env.AI_KV.get("NOTION_PAGES");
+        const pages = pagesData ? JSON.parse(pagesData) : [];
+
+        let syncedCount = 0;
+
+        // Sync each page to RAG system
+        for (const page of pages) {
+            try {
+                // Fetch page content
+                const contentResponse = await fetch(`https://api.notion.com/v1/blocks/${page.id}/children`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Notion-Version': '2022-06-28'
+                    }
+                });
+
+                if (contentResponse.ok) {
+                    const contentData = await contentResponse.json();
+                    const content = extractPageContent(contentData.results);
+
+                    if (content.trim()) {
+                        // Generate embedding for the content
+                        let embedding = null;
+                        try {
+                            const ragConfigStr = await env.AI_KV.get("RAG_CONFIG");
+                            if (ragConfigStr) {
+                                const ragConfig = JSON.parse(ragConfigStr);
+                                console.log('RAG Config:', ragConfig); // Debug log
+                                
+                                const embeddingResponse = await fetch(`${ragConfig.baseurl}/v1/embeddings`, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'Authorization': `Bearer ${ragConfig.apikey}`
+                                    },
+                                    body: JSON.stringify({
+                                        model: ragConfig.model,
+                                        input: content
+                                    })
+                                });
+                                
+                                console.log('Embedding response status:', embeddingResponse.status); // Debug log
+                                
+                                if (embeddingResponse.ok) {
+                                    const embeddingData = await embeddingResponse.json();
+                                    console.log('Embedding data:', embeddingData); // Debug log
+                                    if (embeddingData.data && embeddingData.data[0]) {
+                                        embedding = JSON.stringify(embeddingData.data[0].embedding);
+                                        console.log('Embedding generated successfully'); // Debug log
+                                    }
+                                } else {
+                                    const errorText = await embeddingResponse.text();
+                                    console.error('Embedding API error:', errorText);
+                                }
+                            } else {
+                                console.log('No RAG config found');
+                            }
+                        } catch (embeddingError) {
+                            console.error('Failed to generate embedding:', embeddingError);
+                        }
+
+                        // Store in files table for RAG
+                        const fileId = crypto.randomUUID();
+                        const now = new Date().toISOString();
+
+                        await env.AI_DB.prepare(`
+                            INSERT OR REPLACE INTO files 
+                            (id, name, type, content, embedding, created_at) 
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        `).bind(
+                            fileId,
+                            `Notion: ${page.title}`,
+                            'text',
+                            content,
+                            embedding,
+                            now
+                        ).run();
+
+                        syncedCount++;
+                    }
+                }
+            } catch (pageError) {
+                console.error(`Error syncing page ${page.id}:`, pageError);
+            }
+        }
+
+        return new Response(JSON.stringify({ 
+            success: true, 
+            synced: syncedCount,
+            message: `成功同步${syncedCount}个页面到RAG系统` 
+        }), { headers });
+
+    } catch (error) {
+        console.error("Notion sync all error:", error);
+        return new Response(JSON.stringify({ error: "同步过程中发生错误" }), {
+            status: 500,
+            headers
+        });
+    }
+}
+__name(handleNotionSyncAll, "handleNotionSyncAll");
+
+async function handleNotionCheckUpdates(request, env, headers) {
+    if (request.method !== "GET") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), {
+            status: 405,
+            headers
+        });
+    }
+
+    try {
+        const token = await env.AI_KV.get("NOTION_TOKEN");
+        
+        if (!token) {
+            return new Response(JSON.stringify({ error: "未连接Notion" }), {
+                status: 400,
+                headers
+            });
+        }
+
+        // Get cached pages and check for updates
+        const pagesData = await env.AI_KV.get("NOTION_PAGES");
+        const cachedPages = pagesData ? JSON.parse(pagesData) : [];
+
+        // Fetch current pages
+        const response = await fetch('https://api.notion.com/v1/search', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Notion-Version': '2022-06-28',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                filter: {
+                    value: "page",
+                    property: "object"
+                }
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error("检查更新失败");
+        }
+
+        const data = await response.json();
+        const currentPages = data.results;
+
+        let updatesCount = 0;
+        const cachedPageMap = new Map(cachedPages.map(p => [p.id, p.last_edited_time]));
+
+        for (const page of currentPages) {
+            const cachedTime = cachedPageMap.get(page.id);
+            if (!cachedTime || new Date(page.last_edited_time) > new Date(cachedTime)) {
+                updatesCount++;
+            }
+        }
+
+        return new Response(JSON.stringify({ 
+            updates: updatesCount,
+            message: `发现${updatesCount}个页面有更新` 
+        }), { headers });
+
+    } catch (error) {
+        console.error("Notion check updates error:", error);
+        return new Response(JSON.stringify({ error: "检查更新时发生错误" }), {
+            status: 500,
+            headers
+        });
+    }
+}
+__name(handleNotionCheckUpdates, "handleNotionCheckUpdates");
+
+async function handleNotionStatus(request, env, headers) {
+    if (request.method !== "GET") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), {
+            status: 405,
+            headers
+        });
+    }
+
+    try {
+        const token = await env.AI_KV.get("NOTION_TOKEN");
+        const connected = !!token;
+        
+        return new Response(JSON.stringify({ 
+            connected,
+            token: connected ? "***" : null  // 不返回完整token，只表示存在
+        }), { headers });
+
+    } catch (error) {
+        console.error("Notion status error:", error);
+        return new Response(JSON.stringify({ error: "获取连接状态失败" }), {
+            status: 500,
+            headers
+        });
+    }
+}
+__name(handleNotionStatus, "handleNotionStatus");
+
+async function handleFixEmbeddings(request, env, headers) {
+    if (request.method !== "POST") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), {
+            status: 405,
+            headers
+        });
+    }
+
+    try {
+        // Get all Notion files without embeddings
+        const files = await env.AI_DB.prepare(`
+            SELECT id, name, content 
+            FROM files 
+            WHERE name LIKE 'Notion:%' AND (embedding IS NULL OR embedding = '')
+        `).all();
+
+        if (!files.results || files.results.length === 0) {
+            return new Response(JSON.stringify({ 
+                message: "没有需要修复的文件",
+                fixed: 0 
+            }), { headers });
+        }
+
+        // Get RAG config
+        const ragConfigStr = await env.AI_KV.get("RAG_CONFIG");
+        if (!ragConfigStr) {
+            return new Response(JSON.stringify({ error: "RAG配置未找到" }), {
+                status: 400,
+                headers
+            });
+        }
+
+        const ragConfig = JSON.parse(ragConfigStr);
+        let fixedCount = 0;
+
+        for (const file of files.results) {
+            try {
+                if (!file.content || !file.content.trim()) continue;
+
+                // Generate embedding
+                const embeddingResponse = await fetch(`${ragConfig.baseurl}/v1/embeddings`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${ragConfig.apikey}`
+                    },
+                    body: JSON.stringify({
+                        model: ragConfig.model,
+                        input: file.content
+                    })
+                });
+
+                if (embeddingResponse.ok) {
+                    const embeddingData = await embeddingResponse.json();
+                    if (embeddingData.data && embeddingData.data[0]) {
+                        const embedding = JSON.stringify(embeddingData.data[0].embedding);
+                        
+                        // Update the file with embedding
+                        await env.AI_DB.prepare(`
+                            UPDATE files 
+                            SET embedding = ? 
+                            WHERE id = ?
+                        `).bind(embedding, file.id).run();
+                        
+                        fixedCount++;
+                    }
+                } else {
+                    console.error(`Failed to generate embedding for file ${file.id}:`, await embeddingResponse.text());
+                }
+            } catch (fileError) {
+                console.error(`Error fixing embedding for file ${file.id}:`, fileError);
+            }
+        }
+
+        return new Response(JSON.stringify({ 
+            message: `修复完成，处理了 ${fixedCount} 个文件`,
+            fixed: fixedCount 
+        }), { headers });
+
+    } catch (error) {
+        console.error("Fix embeddings error:", error);
+        return new Response(JSON.stringify({ error: "修复embedding时发生错误" }), {
+            status: 500,
+            headers
+        });
+    }
+}
+__name(handleFixEmbeddings, "handleFixEmbeddings");
+
+async function handleSaveSyncSettings(request, env, headers) {
+    if (request.method !== "POST") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), {
+            status: 405,
+            headers
+        });
+    }
+
+    try {
+        const settings = await request.json();
+        
+        // Validate settings
+        if (typeof settings.enabled !== 'boolean' || !settings.interval) {
+            return new Response(JSON.stringify({ error: "无效的设置数据" }), {
+                status: 400,
+                headers
+            });
+        }
+        
+        // Store settings in KV
+        await env.AI_KV.put("NOTION_AUTO_SYNC", JSON.stringify({
+            enabled: settings.enabled,
+            interval: parseInt(settings.interval),
+            databases: settings.databases || [],
+            lastSync: settings.lastSync || null,
+            updatedAt: new Date().toISOString()
+        }));
+
+        return new Response(JSON.stringify({ 
+            success: true,
+            message: "同步设置已保存" 
+        }), { headers });
+
+    } catch (error) {
+        console.error("Save sync settings error:", error);
+        return new Response(JSON.stringify({ error: "保存设置时发生错误" }), {
+            status: 500,
+            headers
+        });
+    }
+}
+__name(handleSaveSyncSettings, "handleSaveSyncSettings");
+
+async function handleSaveWorkflowSettings(request, env, headers) {
+    if (request.method !== "POST") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), {
+            status: 405,
+            headers
+        });
+    }
+
+    try {
+        const settings = await request.json();
+        
+        // Store workflow settings in KV
+        await env.AI_KV.put("NOTION_WORKFLOW_SETTINGS", JSON.stringify({
+            autoCreatePages: settings.autoCreatePages || false,
+            autoCreateDatabase: settings.autoCreateDatabase || "",
+            createKeywords: settings.createKeywords || "创建,新建,记录",
+            autoUpdatePages: settings.autoUpdatePages || false,
+            updateStrategy: settings.updateStrategy || "append",
+            meetingNotesEnabled: settings.meetingNotesEnabled || false,
+            meetingTemplate: settings.meetingTemplate || "",
+            updatedAt: new Date().toISOString()
+        }));
+
+        return new Response(JSON.stringify({ 
+            success: true,
+            message: "工作流设置已保存" 
+        }), { headers });
+
+    } catch (error) {
+        console.error("Save workflow settings error:", error);
+        return new Response(JSON.stringify({ error: "保存工作流设置时发生错误" }), {
+            status: 500,
+            headers
+        });
+    }
+}
+__name(handleSaveWorkflowSettings, "handleSaveWorkflowSettings");
+
+async function handleGetSyncSettings(request, env, headers) {
+    if (request.method !== "GET") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), {
+            status: 405,
+            headers
+        });
+    }
+
+    try {
+        const settingsData = await env.AI_KV.get("NOTION_AUTO_SYNC");
+        const settings = settingsData ? JSON.parse(settingsData) : {
+            enabled: false,
+            interval: 6,
+            databases: [],
+            lastSync: null
+        };
+
+        return new Response(JSON.stringify(settings), { headers });
+
+    } catch (error) {
+        console.error("Get sync settings error:", error);
+        return new Response(JSON.stringify({ error: "获取同步设置时发生错误" }), {
+            status: 500,
+            headers
+        });
+    }
+}
+__name(handleGetSyncSettings, "handleGetSyncSettings");
+
+async function handleGetWorkflowSettings(request, env, headers) {
+    if (request.method !== "GET") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), {
+            status: 405,
+            headers
+        });
+    }
+
+    try {
+        const settingsData = await env.AI_KV.get("NOTION_WORKFLOW_SETTINGS");
+        const settings = settingsData ? JSON.parse(settingsData) : {
+            autoCreatePages: false,
+            autoCreateDatabase: "",
+            createKeywords: "创建,新建,记录",
+            autoUpdatePages: false,
+            updateStrategy: "append",
+            meetingNotesEnabled: false,
+            meetingTemplate: ""
+        };
+
+        return new Response(JSON.stringify(settings), { headers });
+
+    } catch (error) {
+        console.error("Get workflow settings error:", error);
+        return new Response(JSON.stringify({ error: "获取工作流设置时发生错误" }), {
+            status: 500,
+            headers
+        });
+    }
+}
+__name(handleGetWorkflowSettings, "handleGetWorkflowSettings");
+
+// Helper functions for Notion integration
+function extractPageTitle(page) {
+    if (page.properties) {
+        // Try to get title from properties
+        const titleProp = Object.values(page.properties).find(prop => prop.type === 'title');
+        if (titleProp && titleProp.title && titleProp.title[0]) {
+            return titleProp.title[0].plain_text;
+        }
+    }
+    
+    // Fallback to checking other title sources
+    if (page.title && page.title[0]) {
+        return page.title[0].plain_text;
+    }
+    
+    return "无标题页面";
+}
+__name(extractPageTitle, "extractPageTitle");
+
+function extractPageContent(blocks) {
+    let content = "";
+    
+    for (const block of blocks) {
+        switch (block.type) {
+            case 'paragraph':
+                if (block.paragraph?.rich_text) {
+                    content += block.paragraph.rich_text.map(text => text.plain_text).join('') + '\n\n';
+                }
+                break;
+            case 'heading_1':
+                if (block.heading_1?.rich_text) {
+                    content += '# ' + block.heading_1.rich_text.map(text => text.plain_text).join('') + '\n\n';
+                }
+                break;
+            case 'heading_2':
+                if (block.heading_2?.rich_text) {
+                    content += '## ' + block.heading_2.rich_text.map(text => text.plain_text).join('') + '\n\n';
+                }
+                break;
+            case 'heading_3':
+                if (block.heading_3?.rich_text) {
+                    content += '### ' + block.heading_3.rich_text.map(text => text.plain_text).join('') + '\n\n';
+                }
+                break;
+            case 'bulleted_list_item':
+                if (block.bulleted_list_item?.rich_text) {
+                    content += '- ' + block.bulleted_list_item.rich_text.map(text => text.plain_text).join('') + '\n';
+                }
+                break;
+            case 'numbered_list_item':
+                if (block.numbered_list_item?.rich_text) {
+                    content += '1. ' + block.numbered_list_item.rich_text.map(text => text.plain_text).join('') + '\n';
+                }
+                break;
+            case 'to_do':
+                if (block.to_do?.rich_text) {
+                    const checked = block.to_do.checked ? '[x]' : '[ ]';
+                    content += `${checked} ` + block.to_do.rich_text.map(text => text.plain_text).join('') + '\n';
+                }
+                break;
+            case 'code':
+                if (block.code?.rich_text) {
+                    content += '```\n' + block.code.rich_text.map(text => text.plain_text).join('') + '\n```\n\n';
+                }
+                break;
+            case 'quote':
+                if (block.quote?.rich_text) {
+                    content += '> ' + block.quote.rich_text.map(text => text.plain_text).join('') + '\n\n';
+                }
+                break;
+        }
+    }
+    
+    return content.trim();
+}
+__name(extractPageContent, "extractPageContent");
+
+// Scheduled event handler for Notion auto-sync
+async function scheduled(event, env, ctx) {
+    console.log("Cron trigger fired for Notion auto-sync");
+    
+    try {
+        // Check if auto-sync is enabled
+        const autoSyncSettings = await env.AI_KV.get("NOTION_AUTO_SYNC");
+        if (!autoSyncSettings) {
+            console.log("Auto-sync not configured");
+            return;
+        }
+        
+        const settings = JSON.parse(autoSyncSettings);
+        if (!settings.enabled) {
+            console.log("Auto-sync disabled");
+            return;
+        }
+        
+        // Check if Notion is connected
+        const token = await env.AI_KV.get("NOTION_TOKEN");
+        if (!token) {
+            console.log("Notion not connected");
+            return;
+        }
+        
+        // Perform sync
+        console.log("Starting auto-sync...");
+        
+        // Get cached pages
+        const pagesData = await env.AI_KV.get("NOTION_PAGES");
+        const pages = pagesData ? JSON.parse(pagesData) : [];
+        
+        let syncedCount = 0;
+        
+        for (const page of pages) {
+            try {
+                // Fetch page content
+                const contentResponse = await fetch(`https://api.notion.com/v1/blocks/${page.id}/children`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Notion-Version': '2022-06-28'
+                    }
+                });
+                
+                if (contentResponse.ok) {
+                    const contentData = await contentResponse.json();
+                    const content = extractPageContent(contentData.results);
+                    
+                    if (content.trim()) {
+                        // Generate embedding
+                        let embedding = null;
+                        try {
+                            const ragConfigStr = await env.AI_KV.get("RAG_CONFIG");
+                            if (ragConfigStr) {
+                                const ragConfig = JSON.parse(ragConfigStr);
+                                const embeddingResponse = await fetch(`${ragConfig.baseurl}/v1/embeddings`, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'Authorization': `Bearer ${ragConfig.apikey}`
+                                    },
+                                    body: JSON.stringify({
+                                        model: ragConfig.model,
+                                        input: content
+                                    })
+                                });
+                                
+                                if (embeddingResponse.ok) {
+                                    const embeddingData = await embeddingResponse.json();
+                                    if (embeddingData.data && embeddingData.data[0]) {
+                                        embedding = JSON.stringify(embeddingData.data[0].embedding);
+                                    }
+                                }
+                            }
+                        } catch (embeddingError) {
+                            console.error('Failed to generate embedding:', embeddingError);
+                        }
+                        
+                        // Store in files table
+                        const fileId = crypto.randomUUID();
+                        const now = new Date().toISOString();
+                        
+                        await env.AI_DB.prepare(`
+                            INSERT OR REPLACE INTO files 
+                            (id, name, type, content, embedding, created_at) 
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        `).bind(
+                            fileId,
+                            `Notion: ${page.title}`,
+                            'text',
+                            content,
+                            embedding,
+                            now
+                        ).run();
+                        
+                        syncedCount++;
+                    }
+                }
+            } catch (pageError) {
+                console.error(`Error auto-syncing page ${page.id}:`, pageError);
+            }
+        }
+        
+        console.log(`Auto-sync completed: ${syncedCount} pages synced`);
+        
+    } catch (error) {
+        console.error("Auto-sync error:", error);
+    }
+}
+
 export {
-    worker_default as default
+    worker_default as default,
+    scheduled
 };
 //# sourceMappingURL=worker.js.map
