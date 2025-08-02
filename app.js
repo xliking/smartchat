@@ -121,6 +121,10 @@ async function loadConfigs() {
             const systemConfig = await systemResponse.json();
             document.getElementById('max-messages').value = systemConfig.maxMessages || 20;
             document.getElementById('enable-image').checked = systemConfig.enableImage || false;
+            document.getElementById('max-content-length').value = systemConfig.maxContentLength || 50000;
+            document.getElementById('max-total-length').value = systemConfig.maxTotalLength || 200000;
+            document.getElementById('request-timeout').value = systemConfig.requestTimeout || 300000;
+            document.getElementById('reduce-ratio').value = systemConfig.reduceRatio || 0.5;
         }
         
         // 加载模型配置
@@ -160,6 +164,10 @@ async function loadConfigs() {
             const systemConfig = await systemConfigResponse.json();
             document.getElementById('max-messages').value = systemConfig.maxMessages || 20;
             document.getElementById('enable-image').checked = systemConfig.enableImage || false;
+            document.getElementById('max-content-length').value = systemConfig.maxContentLength || 50000;
+            document.getElementById('max-total-length').value = systemConfig.maxTotalLength || 200000;
+            document.getElementById('request-timeout').value = systemConfig.requestTimeout || 300000;
+            document.getElementById('reduce-ratio').value = systemConfig.reduceRatio || 0.5;
         }
     } catch (error) {
         console.error('Load configs error:', error);
@@ -233,7 +241,11 @@ document.getElementById('system-config-form').addEventListener('submit', async (
     
     const config = {
         maxMessages: parseInt(document.getElementById('max-messages').value),
-        enableImage: document.getElementById('enable-image').checked
+        enableImage: document.getElementById('enable-image').checked,
+        maxContentLength: parseInt(document.getElementById('max-content-length').value),
+        maxTotalLength: parseInt(document.getElementById('max-total-length').value),
+        requestTimeout: parseInt(document.getElementById('request-timeout').value),
+        reduceRatio: parseFloat(document.getElementById('reduce-ratio').value)
     };
 
     try {

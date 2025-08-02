@@ -551,6 +551,19 @@ async function handleChatCompletions(request, env, corsHeaders) {
     const modelConfig = models.find((m) => m.name === requestModel);
     const modelSystemPrompt = modelConfig ? modelConfig.systemPrompt : "";
     let limitedMessages = [...messages];
+    
+    // Limit message content length to prevent timeout
+    const MAX_CONTENT_LENGTH = systemConfig.maxContentLength || 50000;
+    limitedMessages = limitedMessages.map(msg => {
+        if (msg.content && msg.content.length > MAX_CONTENT_LENGTH) {
+            return {
+                ...msg,
+                content: msg.content.substring(0, MAX_CONTENT_LENGTH) + "\n[内容已截断]"
+            };
+        }
+        return msg;
+    });
+    
     const systemMessages = limitedMessages.filter((m) => m.role === "system");
     const otherMessages = limitedMessages.filter((m) => m.role !== "system");
     if (otherMessages.length > maxMessages) {
@@ -559,10 +572,29 @@ async function handleChatCompletions(request, env, corsHeaders) {
             ...otherMessages.slice(-maxMessages)
         ];
     }
+    
+    // Calculate total content length
+    const totalLength = limitedMessages.reduce((sum, msg) => sum + (msg.content?.length || 0), 0);
+    console.log(`📊 对话总长度: ${totalLength} 字符, 消息数: ${limitedMessages.length}`);
+    
+    // If still too long, further reduce messages
+    const MAX_TOTAL_LENGTH = systemConfig.maxTotalLength || 200000;
+    if (totalLength > MAX_TOTAL_LENGTH) {
+        console.log("⚠️ 对话过长，进一步缩减消息数量");
+        const reduceRatio = systemConfig.reduceRatio || 0.5;
+        const reducedMessages = Math.max(5, Math.floor(maxMessages * reduceRatio));
+        limitedMessages = [
+            ...systemMessages,
+            ...otherMessages.slice(-reducedMessages)
+        ];
+    }
     const lastMessage = limitedMessages[limitedMessages.length - 1];
     if (enableImage && lastMessage.content.startsWith("\u753B")) {
         return await handleImageGeneration(lastMessage.content, env, stream, headers);
     }
+    
+    // Store user message for potential Notion workflow
+    const userMessage = lastMessage.content;
     const ragContext = await performRAG(lastMessage.content, env);
     console.log("🤖 RAG上下文结果:", ragContext ? `获取到${ragContext.length}字符` : "无结果");
     if (ragContext) {
@@ -597,11 +629,103 @@ ${ragContext}`
                 model: aiConfig.model,
                 messages: limitedMessages,
                 stream
-            })
+            }),
+            // Add timeout for long requests
+            signal: AbortSignal.timeout(systemConfig.requestTimeout || 300000)
         });
         await saveConversation(apiKey, limitedMessages, env);
         if (stream) {
-            return new Response(aiResponse.body, {
+            // Check if the response is OK before streaming
+            if (!aiResponse.ok) {
+                throw new Error(`AI API error: ${aiResponse.status} ${aiResponse.statusText}`);
+            }
+            
+            // Create a simple transform stream to collect content while streaming
+            const { readable, writable } = new TransformStream();
+            const writer = writable.getWriter();
+            
+            let fullContent = "";
+            let buffer = "";
+            
+            (async () => {
+                try {
+                    const reader = aiResponse.body.getReader();
+                    
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        
+                        // Pass through to client immediately
+                        await writer.write(value);
+                        
+                        // Extract content for Notion - use buffer for reliable parsing
+                        try {
+                            const chunk = new TextDecoder().decode(value);
+                            buffer += chunk;
+                            
+                            // Process complete lines from buffer
+                            const lines = buffer.split('\n');
+                            // Keep the last potentially incomplete line in buffer
+                            buffer = lines.pop() || "";
+                            
+                            for (const line of lines) {
+                                if (line.trim().startsWith('data: ') && !line.includes('[DONE]')) {
+                                    try {
+                                        const jsonStr = line.slice(6).trim();
+                                        if (jsonStr && jsonStr !== '' && jsonStr !== '{}') {
+                                            const data = JSON.parse(jsonStr);
+                                            if (data.choices?.[0]?.delta?.content) {
+                                                fullContent += data.choices[0].delta.content;
+                                            }
+                                        }
+                                    } catch (parseError) {
+                                        // Silently skip malformed JSON
+                                    }
+                                }
+                            }
+                        } catch (chunkError) {
+                            console.log("数据块处理错误:", chunkError.message);
+                        }
+                    }
+                    
+                    // Process any remaining data in buffer
+                    if (buffer.trim().startsWith('data: ') && !buffer.includes('[DONE]')) {
+                        try {
+                            const jsonStr = buffer.slice(6).trim();
+                            if (jsonStr && jsonStr !== '' && jsonStr !== '{}') {
+                                const data = JSON.parse(jsonStr);
+                                if (data.choices?.[0]?.delta?.content) {
+                                    fullContent += data.choices[0].delta.content;
+                                }
+                            }
+                        } catch (e) {
+                            // Ignore final buffer errors
+                        }
+                    }
+                    
+                    // Stream finished, trigger Notion workflow if needed
+                    if (userMessage.includes('创建') || userMessage.includes('新建') || userMessage.includes('记录')) {
+                        console.log("🔍 流式完成，触发 Notion 工作流");
+                        console.log("📝 收集到的内容长度:", fullContent.length);
+                        console.log("📝 内容前200字符:", fullContent.substring(0, 200));
+                        console.log("📝 内容后200字符:", fullContent.substring(Math.max(0, fullContent.length - 200)));
+                        
+                        if (fullContent.length > 10) {
+                            await checkNotionWorkflowTriggers(userMessage, env, apiKey, fullContent);
+                        } else {
+                            console.log("⚠️ 内容太短，使用用户消息创建基础页面");
+                            await checkNotionWorkflowTriggers(userMessage, env, apiKey, null);
+                        }
+                    }
+                    
+                } catch (error) {
+                    console.error("Stream processing error:", error);
+                } finally {
+                    await writer.close();
+                }
+            })();
+            
+            return new Response(readable, {
                 headers: {
                     ...corsHeaders,
                     "Content-Type": "text/event-stream",
@@ -611,9 +735,41 @@ ${ragContext}`
             });
         } else {
             const result = await aiResponse.json();
+            
+            // Check Notion workflow triggers after AI response for non-streaming
+            if (result.choices && result.choices[0] && result.choices[0].message) {
+                const aiContent = result.choices[0].message.content;
+                console.log("🔍 检查 Notion 工作流触发器，用户消息:", userMessage);
+                await checkNotionWorkflowTriggers(userMessage, env, apiKey, aiContent);
+            }
+            
             return new Response(JSON.stringify(result), { headers });
         }
     } catch (error) {
+        console.error("AI service error:", error);
+        
+        // If this is a streaming request and we get an error, return a stream with error
+        if (stream) {
+            const errorStream = new ReadableStream({
+                start(controller) {
+                    const errorData = `data: ${JSON.stringify({
+                        error: "AI service error: " + error.message,
+                        type: "error"
+                    })}\n\n`;
+                    controller.enqueue(new TextEncoder().encode(errorData));
+                    controller.close();
+                }
+            });
+            
+            return new Response(errorStream, {
+                headers: {
+                    ...corsHeaders,
+                    "Content-Type": "text/event-stream",
+                    "Cache-Control": "no-cache"
+                }
+            });
+        }
+        
         return new Response(JSON.stringify({
             error: "AI service error: " + error.message
         }), { status: 500, headers });
@@ -774,7 +930,9 @@ async function rerank(query, documents, env) {
             return documents;
         }
         
-        const rerankedDocs = result.results.sort((a, b) => b.relevance_score - a.relevance_score).map((item) => item.document.text);
+        const rerankedDocs = result.results
+            .sort((a, b) => b.relevance_score - a.relevance_score)
+            .map((item) => documents[item.index]);
         console.log("✅ Rerank完成，重排序后文档数量:", rerankedDocs.length);
         return rerankedDocs;
     } catch (error) {
@@ -1574,6 +1732,202 @@ async function handleGetWorkflowSettings(request, env, headers) {
     }
 }
 __name(handleGetWorkflowSettings, "handleGetWorkflowSettings");
+
+
+// Check Notion workflow triggers for auto-creation
+async function checkNotionWorkflowTriggers(userMessage, env, apiKey, aiContent = null) {
+    try {
+        console.log("🔧 开始检查 Notion 工作流...");
+        
+        // Get workflow settings
+        const workflowData = await env.AI_KV.get("NOTION_WORKFLOW_SETTINGS");
+        console.log("📋 工作流设置数据:", workflowData ? "已找到" : "未找到");
+        
+        if (!workflowData) {
+            console.log("❌ 未找到工作流设置，跳过");
+            return;
+        }
+        
+        const settings = JSON.parse(workflowData);
+        console.log("⚙️ 工作流设置:", JSON.stringify(settings, null, 2));
+        
+        // Check if auto-create pages is enabled
+        console.log("🔍 检查自动创建页面设置:", {
+            autoCreatePages: settings.autoCreatePages,
+            autoCreateDatabase: settings.autoCreateDatabase
+        });
+        
+        if (!settings.autoCreatePages || !settings.autoCreateDatabase) {
+            console.log("❌ 自动创建页面未启用或未设置数据库，跳过");
+            return;
+        }
+        
+        // Check if Notion is connected
+        const token = await env.AI_KV.get("NOTION_TOKEN");
+        console.log("🔗 Notion 连接状态:", token ? "已连接" : "未连接");
+        
+        if (!token) {
+            console.log("❌ Notion 未连接，跳过");
+            return;
+        }
+        
+        // Parse keywords
+        const keywords = (settings.createKeywords || "创建,新建,记录").split(',').map(k => k.trim());
+        
+        // Check if message contains any trigger keywords
+        const messageContainsTrigger = keywords.some(keyword => 
+            userMessage.toLowerCase().includes(keyword.toLowerCase())
+        );
+        
+        if (!messageContainsTrigger) {
+            return;
+        }
+        
+        console.log("🎯 Notion工作流触发:", userMessage);
+        
+        // Extract title from message with better logic
+        let pageTitle = userMessage;
+        
+        // Better pattern matching for "关于...的..."
+        const aboutMatch = userMessage.match(/关于(.+?)(?:的|，|。|$)/);
+        if (aboutMatch) {
+            pageTitle = aboutMatch[1].trim();
+        } else {
+            // Remove trigger keywords and clean up
+            let cleanTitle = userMessage;
+            keywords.forEach(keyword => {
+                cleanTitle = cleanTitle.replace(new RegExp(keyword + '[文档]*[，、。]*', 'gi'), '').trim();
+            });
+            
+            // Remove common words and punctuation
+            cleanTitle = cleanTitle.replace(/^[，。、\s]+|[，。、\s]+$/g, '').trim();
+            
+            if (cleanTitle && cleanTitle.length > 1) {
+                pageTitle = cleanTitle;
+            }
+        }
+        
+        // Add timestamp prefix if title is meaningful
+        if (pageTitle && pageTitle.length > 2 && !pageTitle.includes('新文档')) {
+            const today = new Date().toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
+            pageTitle = `${today} ${pageTitle}`;
+        } else {
+            pageTitle = `新文档_${new Date().toISOString().slice(0, 10)}`;
+        }
+        
+        // Create page in Notion with AI content
+        const contentToSave = aiContent || userMessage;
+        await createNotionPage(token, settings.autoCreateDatabase, pageTitle, userMessage, contentToSave, env);
+        
+    } catch (error) {
+        console.error("Notion workflow trigger error:", error);
+    }
+}
+__name(checkNotionWorkflowTriggers, "checkNotionWorkflowTriggers");
+
+async function createNotionPage(token, databaseId, title, userRequest, aiContent, env) {
+    try {
+        console.log(`📝 创建Notion页面: ${title} (数据库: ${databaseId})`);
+        console.log(`📄 用户请求: ${userRequest}`);
+        console.log(`🤖 AI内容长度: ${aiContent ? aiContent.length : 0}`);
+        
+        // First, get database schema to find the correct title property
+        const dbResponse = await fetch(`https://api.notion.com/v1/databases/${databaseId}`, {
+            headers: {
+                "Authorization": `Bearer ${token}`,
+                "Notion-Version": "2022-06-28"
+            }
+        });
+        
+        let titlePropertyName = "Name"; // default fallback
+        
+        if (dbResponse.ok) {
+            const dbInfo = await dbResponse.json();
+            console.log("🗄️ 数据库属性:", Object.keys(dbInfo.properties));
+            
+            // Find the title property
+            const titleProperty = Object.entries(dbInfo.properties).find(([key, prop]) => prop.type === 'title');
+            if (titleProperty) {
+                titlePropertyName = titleProperty[0];
+                console.log(`✅ 找到标题属性: ${titlePropertyName}`);
+            } else {
+                console.log("⚠️ 未找到标题属性，使用默认名称");
+            }
+        } else {
+            console.log("⚠️ 无法获取数据库信息，使用默认属性名");
+        }
+        
+        const pageData = {
+            parent: {
+                database_id: databaseId
+            },
+            properties: {},
+            children: [
+                {
+                    object: "block",
+                    type: "paragraph",
+                    paragraph: {
+                        rich_text: [
+                            {
+                                type: "text",
+                                text: {
+                                    content: aiContent || `用户请求: ${userRequest}\n\n创建时间: ${new Date().toLocaleString('zh-CN')}`
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        };
+        
+        // Set the title property dynamically
+        pageData.properties[titlePropertyName] = {
+            title: [
+                {
+                    text: {
+                        content: title
+                    }
+                }
+            ]
+        };
+        
+        console.log("📋 页面数据:", JSON.stringify(pageData, null, 2));
+        
+        const response = await fetch("https://api.notion.com/v1/pages", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json",
+                "Notion-Version": "2022-06-28"
+            },
+            body: JSON.stringify(pageData)
+        });
+        
+        if (response.ok) {
+            const result = await response.json();
+            console.log("✅ Notion页面创建成功:", result.id);
+            
+            // Update cached pages
+            const pagesData = await env.AI_KV.get("NOTION_PAGES");
+            const pages = pagesData ? JSON.parse(pagesData) : [];
+            pages.unshift({
+                id: result.id,
+                title: title,
+                created_time: new Date().toISOString(),
+                last_edited_time: new Date().toISOString()
+            });
+            await env.AI_KV.put("NOTION_PAGES", JSON.stringify(pages));
+            
+        } else {
+            const error = await response.json();
+            console.error("❌ Notion页面创建失败:", error);
+        }
+        
+    } catch (error) {
+        console.error("Create Notion page error:", error);
+    }
+}
+__name(createNotionPage, "createNotionPage");
 
 // Helper functions for Notion integration
 function extractPageTitle(page) {

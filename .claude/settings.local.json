@@ -17,7 +17,11 @@
       "Bash(npm run deploy:*)",
       "Bash(wrangler deploy:*)",
       "Bash(wrangler pages deploy:*)",
-      "Bash(wrangler pages project:*)"
+      "Bash(wrangler pages project:*)",
+      "Bash(wrangler kv:key get:*)",
+      "Bash(wrangler kv key get:*)",
+      "Bash(wrangler tail:*)",
+      "Bash(wrangler logpush:*)"
     ],
     "deny": []
   }
