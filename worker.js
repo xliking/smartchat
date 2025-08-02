@@ -1650,10 +1650,6 @@ async function handleSaveWorkflowSettings(request, env, headers) {
             autoCreatePages: settings.autoCreatePages || false,
             autoCreateDatabase: settings.autoCreateDatabase || "",
             createKeywords: settings.createKeywords || "创建,新建,记录",
-            autoUpdatePages: settings.autoUpdatePages || false,
-            updateStrategy: settings.updateStrategy || "append",
-            meetingNotesEnabled: settings.meetingNotesEnabled || false,
-            meetingTemplate: settings.meetingTemplate || "",
             updatedAt: new Date().toISOString()
         }));
 
@@ -1714,11 +1710,7 @@ async function handleGetWorkflowSettings(request, env, headers) {
         const settings = settingsData ? JSON.parse(settingsData) : {
             autoCreatePages: false,
             autoCreateDatabase: "",
-            createKeywords: "创建,新建,记录",
-            autoUpdatePages: false,
-            updateStrategy: "append",
-            meetingNotesEnabled: false,
-            meetingTemplate: ""
+            createKeywords: "创建,新建,记录"
         };
 
         return new Response(JSON.stringify(settings), { headers });
@@ -1744,7 +1736,8 @@ async function checkNotionWorkflowTriggers(userMessage, env, apiKey, aiContent =
         console.log("📋 工作流设置数据:", workflowData ? "已找到" : "未找到");
         
         if (!workflowData) {
-            console.log("❌ 未找到工作流设置，跳过");
+            console.log("❌ 未找到工作流设置，请先在管理面板配置工作流");
+            console.log("💡 配置路径: 管理面板 → Notion集成 → 工作流配置");
             return;
         }
         
@@ -1928,6 +1921,7 @@ async function createNotionPage(token, databaseId, title, userRequest, aiContent
     }
 }
 __name(createNotionPage, "createNotionPage");
+
 
 // Helper functions for Notion integration
 function extractPageTitle(page) {

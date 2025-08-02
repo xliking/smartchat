@@ -1680,8 +1680,12 @@ function displayNotionDatabases() {
         syncContainer.appendChild(checkboxItem);
     });
     
-    // Populate dropdowns
-    populateNotionDropdowns();
+    // Populate dropdowns only if the elements exist
+    try {
+        populateNotionDropdowns();
+    } catch (error) {
+        console.log("工作流页面元素未加载，跳过下拉框填充");
+    }
     
     // Re-initialize icons
     if (typeof lucide !== 'undefined') {
@@ -1815,18 +1819,6 @@ async function loadNotionSettings() {
             if (createKeywords) {
                 createKeywords.value = workflowSettings.createKeywords || "创建,新建,记录";
             }
-            if (autoUpdatePages) {
-                autoUpdatePages.checked = workflowSettings.autoUpdatePages || false;
-            }
-            if (updateStrategy) {
-                updateStrategy.value = workflowSettings.updateStrategy || "append";
-            }
-            if (meetingNotesEnabled) {
-                meetingNotesEnabled.checked = workflowSettings.meetingNotesEnabled || false;
-            }
-            if (meetingTemplate) {
-                meetingTemplate.value = workflowSettings.meetingTemplate || "";
-            }
         }
         
     } catch (error) {
@@ -1837,19 +1829,28 @@ async function loadNotionSettings() {
 // Populate dropdowns with databases
 function populateNotionDropdowns() {
     const autoCreateSelect = document.getElementById('auto-create-database');
-    const meetingTemplateSelect = document.getElementById('meeting-template');
+    
+    if (!autoCreateSelect) {
+        console.log("⚠️ 未找到数据库选择框");
+        return;
+    }
     
     // Clear existing options
     autoCreateSelect.innerHTML = '<option value="">选择数据库</option>';
-    meetingTemplateSelect.innerHTML = '<option value="">选择模板</option>';
     
-    notionConfig.databases.forEach(db => {
-        const option = document.createElement('option');
-        option.value = db.id;
-        option.textContent = db.title;
-        autoCreateSelect.appendChild(option.cloneNode(true));
-        meetingTemplateSelect.appendChild(option);
-    });
+    console.log("📊 填充数据库选项，数据库数量:", notionConfig.databases?.length || 0);
+    
+    if (notionConfig.databases && notionConfig.databases.length > 0) {
+        notionConfig.databases.forEach(db => {
+            const option = document.createElement('option');
+            option.value = db.id;
+            option.textContent = db.title;
+            autoCreateSelect.appendChild(option);
+            console.log("✅ 添加数据库选项:", db.title);
+        });
+    } else {
+        console.log("❌ 没有可用的数据库");
+    }
 }
 
 // Sync operations
@@ -2135,6 +2136,11 @@ function switchNotionTab(tabName) {
     const activeBtn = document.querySelector(`[data-tab="${tabName}"]`);
     activeBtn.classList.add('active', 'border-indigo-500', 'text-indigo-600');
     activeBtn.classList.remove('border-transparent', 'text-gray-500');
+    
+    // Populate dropdowns when switching to workflow tab
+    if (tabName === 'workflow') {
+        populateNotionDropdowns();
+    }
 }
 
 // Event listeners for Notion functionality
@@ -2195,19 +2201,11 @@ document.addEventListener('DOMContentLoaded', function() {
         const autoCreatePages = document.getElementById('auto-create-pages').checked;
         const autoCreateDatabase = document.getElementById('auto-create-database').value;
         const createKeywords = document.getElementById('create-keywords').value;
-        const autoUpdatePages = document.getElementById('auto-update-pages').checked;
-        const updateStrategy = document.getElementById('update-strategy').value;
-        const meetingNotesEnabled = document.getElementById('meeting-notes-enabled').checked;
-        const meetingTemplate = document.getElementById('meeting-template').value;
         
         const settings = {
             autoCreatePages,
             autoCreateDatabase,
-            createKeywords,
-            autoUpdatePages,
-            updateStrategy,
-            meetingNotesEnabled,
-            meetingTemplate
+            createKeywords
         };
         
         try {
