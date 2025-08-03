@@ -139,8 +139,13 @@ async function loadConfigs() {
             const aiConfig = await aiConfigResponse.json();
             document.getElementById('ai-baseurl').value = aiConfig.baseurl || '';
             document.getElementById('ai-apikey').value = aiConfig.apikey || '';
-            document.getElementById('ai-model').value = aiConfig.model || '';
+            
+            // 加载已选择的模型并显示
+            await loadSelectedModelsFromConfig(aiConfig);
         }
+        
+        // 初始化AI配置表单监听器
+        initAIConfigListeners();
 
         // 加载 RAG 配置
         const ragConfigResponse = await fetch(`${API_BASE_URL}/api/rag-config`, {
@@ -203,6 +208,434 @@ document.getElementById('ai-config-form').addEventListener('submit', async (e) =
         showNotification('AI 配置保存请求失败', 'error');
     }
 });
+
+// 获取AI模型列表
+document.getElementById('fetch-ai-models').addEventListener('click', async () => {
+    const baseUrl = document.getElementById('ai-baseurl').value.trim();
+    const apiKey = document.getElementById('ai-apikey').value.trim();
+    
+    if (!baseUrl || !apiKey) {
+        showNotification('请先填写BaseURL和API Key', 'error');
+        return;
+    }
+    
+    try {
+        // 显示加载状态
+        const fetchBtn = document.getElementById('fetch-ai-models');
+        const originalHTML = fetchBtn.innerHTML;
+        fetchBtn.innerHTML = '<i data-lucide="loader" class="inline w-5 h-5 animate-spin"></i>';
+        fetchBtn.disabled = true;
+        
+        const response = await fetch(`${API_BASE_URL}/api/fetch-models`, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + authToken 
+            },
+            body: JSON.stringify({ baseUrl, apiKey })
+        });
+        
+        // 恢复按钮状态
+        fetchBtn.innerHTML = originalHTML;
+        fetchBtn.disabled = false;
+        lucide.createIcons(); // 重新渲染图标
+        
+        if (response.ok) {
+            const data = await response.json();
+            if (data.models && data.models.length > 0) {
+                // 获取已选择的模型
+                let existingSelectedModels = [];
+                try {
+                    const aiModelConfigResponse = await fetch(`${API_BASE_URL}/api/ai-model-config`, {
+                        headers: { 'Authorization': 'Bearer ' + authToken }
+                    });
+                    if (aiModelConfigResponse.ok) {
+                        const modelConfig = await aiModelConfigResponse.json();
+                        existingSelectedModels = modelConfig.selectedModels || [];
+                    }
+                } catch (e) {
+                    console.log('No existing model config found');
+                }
+
+                // 创建模型选择复选框列表
+                let options = data.models.map((model, index) => {
+                    const isAlreadySelected = existingSelectedModels.includes(model.id);
+                    return `<label class="flex items-center p-2 hover:bg-gray-50 rounded ${isAlreadySelected ? 'bg-green-50' : ''}">
+                        <input type="checkbox" class="model-select-checkbox mr-2 rounded text-indigo-600" data-model="${model.id}">
+                        <span>${model.id}</span>
+                        ${isAlreadySelected ? '<span class="ml-2 text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">已选择</span>' : ''}
+                    </label>`;
+                }).join('');
+                
+                showModal('选择模型', `
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between">
+                            <p class="text-gray-600">从获取的 ${data.models.length} 个模型中选择一个或多个：</p>
+                            ${existingSelectedModels.length > 0 ? 
+                                `<span class="text-sm text-green-600 bg-green-50 px-2 py-1 rounded-full">当前已有 ${existingSelectedModels.length} 个模型</span>` : 
+                                ''
+                            }
+                        </div>
+                        <div class="max-h-64 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                            ${options}
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center">
+                                <input type="checkbox" id="select-all-models-modal" class="mr-2 rounded text-indigo-600">
+                                <label for="select-all-models-modal" class="text-sm text-gray-700">全选新模型</label>
+                            </div>
+                            <p class="text-xs text-gray-500">选择的模型将增量添加到现有配置中</p>
+                        </div>
+                    </div>
+                `, async () => {
+                    const selectedModels = Array.from(document.querySelectorAll('.model-select-checkbox:checked'))
+                        .map(checkbox => checkbox.dataset.model);
+                    
+                    if (selectedModels.length === 0) {
+                        showNotification('请至少选择一个模型', 'error');
+                        return false;
+                    }
+                    
+                    // 保存选中的模型和BaseURL关联
+                    await saveSelectedModelsWithBaseURL(selectedModels, baseUrl);
+                    
+                    // 计算最终的总模型数（现有 + 新增，去重）
+                    const finalModelCount = new Set([...existingSelectedModels, ...selectedModels]).size;
+                    showNotification(`已新增 ${selectedModels.length} 个模型，当前共有 ${finalModelCount} 个模型`, 'success');
+                    
+                    // 注意：updateAIConfigModelDisplay会在saveSelectedModelsWithBaseURL中自动调用，显示所有模型
+                    
+                    // 自动关闭模态框
+                    hideModal();
+                    return true;
+                });
+                
+                // 全选功能 - 只选择新模型（未被选择的模型）
+                document.getElementById('select-all-models-modal').addEventListener('change', function() {
+                    const checkboxes = document.querySelectorAll('.model-select-checkbox');
+                    checkboxes.forEach(checkbox => {
+                        const modelId = checkbox.dataset.model;
+                        const isAlreadySelected = existingSelectedModels.includes(modelId);
+                        // 只对新模型进行全选操作
+                        if (!isAlreadySelected) {
+                            checkbox.checked = this.checked;
+                        }
+                    });
+                });
+            } else {
+                showNotification('未能获取到任何模型', 'error');
+            }
+        } else {
+            const error = await response.json();
+            showNotification(`获取失败: ${error.error}`, 'error');
+        }
+    } catch (error) {
+        // 恢复按钮状态
+        const fetchBtn = document.getElementById('fetch-ai-models');
+        fetchBtn.innerHTML = '<i data-lucide="download" class="inline w-5 h-5"></i>';
+        fetchBtn.disabled = false;
+        lucide.createIcons(); // 重新渲染图标
+        showNotification('获取模型列表时发生错误: ' + error.message, 'error');
+    }
+});
+
+// 保存选中的模型和BaseURL关联
+async function saveSelectedModelsWithBaseURL(newModelIds, baseUrl) {
+    try {
+        // 获取现有的模型配置进行增量更新
+        let existingConfig = { selectedModels: [], baseUrl: "" };
+        try {
+            const existingResponse = await fetch(`${API_BASE_URL}/api/ai-model-config`, {
+                headers: { 'Authorization': 'Bearer ' + authToken }
+            });
+            if (existingResponse.ok) {
+                existingConfig = await existingResponse.json();
+            }
+        } catch (e) {
+            console.log('No existing config found, starting fresh');
+        }
+        
+        // 增量合并：添加新模型，保留现有模型，去重
+        const allModels = [...new Set([...existingConfig.selectedModels, ...newModelIds])];
+        
+        // 保存合并后的模型配置到新的KV存储
+        const modelConfigResponse = await fetch(`${API_BASE_URL}/api/ai-model-config`, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + authToken 
+            },
+            body: JSON.stringify({
+                selectedModels: allModels,
+                baseUrl: baseUrl, // 使用最新的BaseURL
+                updatedAt: new Date().toISOString()
+            })
+        });
+        
+        if (modelConfigResponse.ok) {
+            // 也保存到旧的模型管理系统（增量模式）
+            await saveSelectedModels(newModelIds);
+            
+            // 更新显示为所有模型（包括之前的和新增的）
+            updateAIConfigModelDisplay(allModels);
+        } else {
+            showNotification('保存模型配置失败', 'error');
+        }
+    } catch (error) {
+        console.error('Save model config error:', error);
+        showNotification('保存模型配置时发生错误', 'error');
+    }
+}
+
+// 保存选中的模型
+async function saveSelectedModels(modelIds) {
+    try {
+        // 获取现有模型列表
+        let existingModels = [];
+        const response = await fetch(`${API_BASE_URL}/api/models`, {
+            headers: { 'Authorization': 'Bearer ' + authToken }
+        });
+        
+        if (response.ok) {
+            existingModels = await response.json();
+        }
+        
+        // 获取AI配置中的默认模型
+        let defaultModel = '';
+        try {
+            const aiConfigResponse = await fetch(`${API_BASE_URL}/api/ai-config`, {
+                headers: { 'Authorization': 'Bearer ' + authToken }
+            });
+            if (aiConfigResponse.ok) {
+                const aiConfig = await aiConfigResponse.json();
+                defaultModel = aiConfig.model || '';
+            }
+        } catch (e) {
+            console.log('获取AI配置失败:', e);
+        }
+        
+        // 创建新的模型列表，包含选中的模型
+        const now = new Date().toISOString();
+        const selectedModels = modelIds.map(modelId => ({
+            id: modelId,
+            name: modelId, // id和name相同表示这是从AI服务获取的模型
+            selectedRag: false,
+            systemPrompt: '',
+            boundModels: [], // 对于获取的模型，不需要绑定其他模型
+            created: now,
+            lastUpdated: now
+        }));
+        
+        // 合并现有模型和新选中的模型，避免重复
+        const updatedModels = [...existingModels];
+        selectedModels.forEach(newModel => {
+            const existingIndex = updatedModels.findIndex(m => m.id === newModel.id && m.name === newModel.name);
+            if (existingIndex >= 0) {
+                // 更新现有模型
+                updatedModels[existingIndex] = {
+                    ...updatedModels[existingIndex],
+                    ...newModel,
+                    boundModels: updatedModels[existingIndex].boundModels || [] // 保留自定义模型的绑定信息
+                };
+            } else {
+                // 添加新模型
+                updatedModels.push(newModel);
+            }
+        });
+        
+        // 保存更新后的模型列表
+        const saveResponse = await fetch(`${API_BASE_URL}/api/models`, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + authToken 
+            },
+            body: JSON.stringify(updatedModels)
+        });
+        
+        if (saveResponse.ok) {
+            // 重新加载模型列表
+            await loadModels();
+            showNotification('模型列表更新成功', 'success');
+            
+            // 如果AI配置中的默认模型在选中的模型中，更新AI配置
+            if (modelIds.includes(defaultModel)) {
+                showNotification(`注意：当前AI配置中的默认模型 "${defaultModel}" 已在选中的模型中`, 'info');
+            }
+        } else {
+            showNotification('保存模型列表失败', 'error');
+        }
+    } catch (error) {
+        console.error('Save selected models error:', error);
+        showNotification('保存模型列表时发生错误', 'error');
+    }
+}
+
+// 更新AI配置中的模型名称显示
+function updateAIConfigModelDisplay(selectedModels) {
+    const modelInput = document.getElementById('ai-model');
+    const modelDisplay = document.getElementById('selected-models-display');
+    const modelTags = document.getElementById('selected-models-tags');
+    
+    if (modelInput && selectedModels.length > 0) {
+        // 显示选中的模型数量
+        modelInput.value = `已选择 ${selectedModels.length} 个模型`;
+        
+        // 显示标签形式的模型列表
+        if (modelDisplay && modelTags) {
+            modelDisplay.classList.remove('hidden');
+            modelTags.innerHTML = selectedModels.map(model => 
+                `<span class="inline-flex items-center px-2 py-1 text-xs font-medium bg-indigo-100 text-indigo-800 rounded-full">
+                    ${model}
+                    <button type="button" class="ml-1 text-indigo-600 hover:text-indigo-800" onclick="removeSelectedModel('${model}')" title="删除此模型">
+                        <i data-lucide="x" class="w-3 h-3"></i>
+                    </button>
+                </span>`
+            ).join('');
+            lucide.createIcons();
+        }
+    } else {
+        modelInput.value = '';
+        if (modelDisplay) {
+            modelDisplay.classList.add('hidden');
+        }
+    }
+}
+
+// 启用/禁用获取模型按钮
+function updateFetchModelsButtonState() {
+    const baseUrl = document.getElementById('ai-baseurl').value.trim();
+    const apiKey = document.getElementById('ai-apikey').value.trim();
+    const fetchBtn = document.getElementById('fetch-ai-models');
+    
+    if (fetchBtn) {
+        fetchBtn.disabled = !baseUrl || !apiKey;
+    }
+}
+
+// 初始化AI配置表单监听器
+function initAIConfigListeners() {
+    const baseUrlInput = document.getElementById('ai-baseurl');
+    const apiKeyInput = document.getElementById('ai-apikey');
+    const clearModelsBtn = document.getElementById('clear-models-btn');
+    
+    if (baseUrlInput) {
+        baseUrlInput.addEventListener('input', updateFetchModelsButtonState);
+    }
+    
+    if (apiKeyInput) {
+        apiKeyInput.addEventListener('input', updateFetchModelsButtonState);
+    }
+    
+    if (clearModelsBtn) {
+        clearModelsBtn.addEventListener('click', clearAllSelectedModels);
+    }
+    
+    // 初始化按钮状态
+    updateFetchModelsButtonState();
+}
+
+// 从AI配置加载已选择的模型
+async function loadSelectedModelsFromConfig(aiConfig) {
+    try {
+        // 尝试从新的KV存储获取模型配置
+        const response = await fetch(`${API_BASE_URL}/api/ai-model-config`, {
+            headers: { 'Authorization': 'Bearer ' + authToken }
+        });
+        
+        if (response.ok) {
+            const modelConfig = await response.json();
+            if (modelConfig.selectedModels && modelConfig.selectedModels.length > 0) {
+                updateAIConfigModelDisplay(modelConfig.selectedModels);
+                return;
+            }
+        }
+        
+        // 回退：检查是否有旧的单一模型配置
+        if (aiConfig.model) {
+            updateAIConfigModelDisplay([aiConfig.model]);
+        }
+    } catch (error) {
+        console.error('Error loading selected models:', error);
+        // 回退到显示旧的单一模型
+        if (aiConfig.model) {
+            updateAIConfigModelDisplay([aiConfig.model]);
+        }
+    }
+}
+
+// 清空所有选中的模型
+async function clearAllSelectedModels() {
+    try {
+        const confirmed = confirm('确定要清空所有已选择的模型吗？');
+        if (!confirmed) return;
+        
+        // 清空KV存储中的模型配置
+        const response = await fetch(`${API_BASE_URL}/api/ai-model-config`, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + authToken 
+            },
+            body: JSON.stringify({
+                selectedModels: [],
+                baseUrl: "",
+                updatedAt: new Date().toISOString()
+            })
+        });
+        
+        if (response.ok) {
+            updateAIConfigModelDisplay([]);
+            showNotification('已清空所有选中的模型', 'success');
+        } else {
+            showNotification('清空模型失败', 'error');
+        }
+    } catch (error) {
+        console.error('Clear models error:', error);
+        showNotification('清空模型时发生错误', 'error');
+    }
+}
+
+// 删除单个选中的模型
+async function removeSelectedModel(modelToRemove) {
+    try {
+        // 获取当前配置
+        const response = await fetch(`${API_BASE_URL}/api/ai-model-config`, {
+            headers: { 'Authorization': 'Bearer ' + authToken }
+        });
+        
+        if (response.ok) {
+            const config = await response.json();
+            const updatedModels = config.selectedModels.filter(model => model !== modelToRemove);
+            
+            // 保存更新后的配置
+            const saveResponse = await fetch(`${API_BASE_URL}/api/ai-model-config`, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + authToken 
+                },
+                body: JSON.stringify({
+                    selectedModels: updatedModels,
+                    baseUrl: config.baseUrl,
+                    updatedAt: new Date().toISOString()
+                })
+            });
+            
+            if (saveResponse.ok) {
+                updateAIConfigModelDisplay(updatedModels);
+                showNotification(`已移除模型 "${modelToRemove}"`, 'success');
+            } else {
+                showNotification('移除模型失败', 'error');
+            }
+        } else {
+            showNotification('获取模型配置失败', 'error');
+        }
+    } catch (error) {
+        console.error('Remove model error:', error);
+        showNotification('移除模型时发生错误', 'error');
+    }
+}
 
 // RAG 配置保存
 document.getElementById('rag-config-form').addEventListener('submit', async (e) => {
@@ -915,6 +1348,7 @@ async function performDeleteFile(fileId) {
 
 // 模型管理功能
 let models = [];
+let fetchedModels = []; // 从AI服务获取的模型列表
 
 // 加载模型列表
 async function loadModels() {
@@ -925,10 +1359,13 @@ async function loadModels() {
         
         if (response.ok) {
             models = await response.json();
+            // 只显示自定义模型（name和id不相等或者没有id的模型）
+            models = models.filter(model => !model.id || model.id !== model.name);
             renderModels();
         }
     } catch (error) {
         console.error('Load models error:', error);
+        showNotification('加载模型列表失败', 'error');
     }
 }
 
@@ -937,23 +1374,64 @@ function renderModels() {
     const container = document.getElementById('models-list');
     container.innerHTML = '';
     
-    if (models.length === 0) {
+    // 先过滤出自定义模型（name和id不相等或者没有id的模型）
+    const customModels = models.filter(model => !model.id || model.id !== model.name);
+    
+    if (customModels.length === 0) {
         container.innerHTML = `
             <div class="glass-card rounded-2xl p-12 text-center">
                 <i data-lucide="brain" class="w-16 h-16 text-gray-400 mx-auto mb-4"></i>
                 <h3 class="text-lg font-semibold text-gray-700 mb-2">暂无模型配置</h3>
                 <p class="text-gray-500 mb-6">点击上方按钮添加您的第一个AI模型</p>
-                <button onclick="addModel()" class="btn-primary px-6 py-3 text-white font-semibold rounded-xl">
-                    <i data-lucide="plus" class="inline w-5 h-5 mr-2"></i>
-                    立即添加
-                </button>
+                <div class="flex flex-col sm:flex-row gap-4 justify-center">
+                    <button onclick="addModel()" class="btn-primary px-6 py-3 text-white font-semibold rounded-xl">
+                        <i data-lucide="plus" class="inline w-5 h-5 mr-2"></i>
+                        手动添加
+                    </button>
+                    <button onclick="fetchModelsFromAPI()" class="px-6 py-3 bg-indigo-100 text-indigo-700 font-semibold rounded-xl hover:bg-indigo-200 transition-colors">
+                        <i data-lucide="download" class="inline w-5 h-5 mr-2"></i>
+                        获取模型列表
+                    </button>
+                </div>
             </div>
         `;
         lucide.createIcons();
         return;
     }
     
-    models.forEach((model, index) => {
+    // 显示"获取模型列表"按钮
+    const header = document.querySelector('#models-section .flex.items-center.justify-between');
+    if (header) {
+        let fetchBtn = document.getElementById('fetch-models-btn');
+        if (!fetchBtn) {
+            fetchBtn = document.createElement('button');
+            fetchBtn.id = 'fetch-models-btn';
+            fetchBtn.className = 'px-6 py-3 bg-indigo-100 text-indigo-700 font-semibold rounded-xl hover:bg-indigo-200 transition-colors';
+            fetchBtn.innerHTML = '<i data-lucide="download" class="inline w-5 h-5 mr-2"></i>获取模型列表';
+            fetchBtn.onclick = fetchModelsFromAPI;
+            
+            // 安全地添加按钮 - 直接添加到header而不是查找子元素
+            header.appendChild(fetchBtn);
+            lucide.createIcons();
+        }
+    }
+    
+    customModels.forEach((model, index) => {
+        // 显示绑定的模型
+        let boundModelsHtml = '';
+        if (model.boundModels && model.boundModels.length > 0) {
+            boundModelsHtml = `
+                <div class="bg-blue-50 rounded-xl p-3 mt-3">
+                    <h4 class="text-sm font-semibold text-gray-700 mb-2">绑定的AI模型</h4>
+                    <div class="max-h-32 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                        ${model.boundModels.map(boundModel => 
+                            `<div class="text-sm py-1 px-2 bg-white border border-gray-200 rounded mb-1 last:mb-0">${boundModel}</div>`
+                        ).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        
         const div = document.createElement('div');
         div.className = 'glass-card card-hover rounded-2xl p-6';
         
@@ -965,11 +1443,11 @@ function renderModels() {
                     </div>
                     <div>
                         <h3 class="text-lg font-semibold text-gray-900">${model.name}</h3>
-                        <p class="text-sm text-gray-500">AI 模型</p>
+                        <p class="text-sm text-gray-500">自定义模型</p>
                     </div>
                 </div>
                 <div class="flex space-x-2">
-                    <button onclick="editModel(${index})" class="px-3 py-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors duration-200">
+                    <button onclick="(async () => await editModel(${index}))()" class="px-3 py-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors duration-200">
                         <i data-lucide="edit-2" class="w-4 h-4"></i>
                     </button>
                     <button onclick="deleteModel(${index})" class="px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors duration-200">
@@ -977,9 +1455,19 @@ function renderModels() {
                     </button>
                 </div>
             </div>
-            <div class="bg-gray-50 rounded-xl p-4">
+            <div class="bg-gray-50 rounded-xl p-4 mb-4">
                 <h4 class="text-sm font-semibold text-gray-700 mb-2">系统提示词</h4>
                 <p class="text-sm text-gray-600 leading-relaxed">${model.systemPrompt || '<span class="text-gray-400">未设置系统提示词</span>'}</p>
+            </div>
+            ${boundModelsHtml}
+            <div class="flex items-center justify-between bg-blue-50 rounded-xl p-4 mt-3">
+                <div class="flex items-center">
+                    <input type="checkbox" id="rag-${index}" class="mr-2 rounded text-indigo-600" ${model.selectedRag ? 'checked' : ''} onchange="toggleRag(${index})">
+                    <label for="rag-${index}" class="text-sm font-medium text-gray-700">启用RAG检索增强</label>
+                </div>
+                <span class="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full">
+                    ${model.selectedRag ? '已启用' : '已禁用'}
+                </span>
             </div>
         `;
         
@@ -989,28 +1477,266 @@ function renderModels() {
     lucide.createIcons();
 }
 
+// 切换RAG功能
+function toggleRag(index) {
+    models[index].selectedRag = !models[index].selectedRag;
+    saveModels();
+    renderModels();
+    showNotification(`模型 "${models[index].name}" 的RAG功能已${models[index].selectedRag ? '启用' : '禁用'}`, 'success');
+}
+
 // 初始化模型管理事件
 function initModelManagement() {
-    document.getElementById('add-model-btn').addEventListener('click', addModel);
+    document.getElementById('add-model-btn').addEventListener('click', async () => {
+        await addModel();
+    });
+}
+
+// 从AI服务获取模型列表
+async function fetchModelsFromAPI() {
+    // 先获取系统配置中的AI配置
+    let aiConfig = { baseurl: '', apikey: '' };
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/ai-config`, {
+            headers: { 'Authorization': 'Bearer ' + authToken }
+        });
+        if (response.ok) {
+            aiConfig = await response.json();
+        }
+    } catch (error) {
+        console.error('Error loading AI config:', error);
+    }
+    
+    // 检查是否已配置AI服务
+    if (!aiConfig.baseurl || !aiConfig.apikey) {
+        showNotification('请先在系统配置中完整填写AI模型配置的BaseURL和API Key', 'error');
+        return;
+    }
+    
+    // 显示获取模型对话框
+    showModal('获取模型列表', `
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">BaseURL *</label>
+                <input type="text" id="fetch-baseurl" class="w-full px-4 py-3 border border-gray-200 rounded-xl bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" value="${aiConfig.baseurl}" readonly>
+                <p class="text-xs text-gray-500 mt-1">自动从系统配置读取，不可修改</p>
+            </div>
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">API Key *</label>
+                <input type="password" id="fetch-apikey" class="w-full px-4 py-3 border border-gray-200 rounded-xl bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" value="${aiConfig.apikey}" readonly>
+                <p class="text-xs text-gray-500 mt-1">自动从系统配置读取，不可修改</p>
+            </div>
+            <div class="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <p class="text-sm text-blue-800">说明：此功能将使用系统配置中的AI服务信息获取可用模型列表。如需修改BaseURL或API Key，请前往系统配置页面。</p>
+            </div>
+        </div>
+    `, async () => {
+        const baseUrl = aiConfig.baseurl;
+        const apiKey = aiConfig.apikey;
+        
+        if (!baseUrl || !apiKey) {
+            showNotification('请填写BaseURL和API Key', 'error');
+            return false;
+        }
+        
+        try {
+            // 显示加载状态
+            const confirmBtn = document.getElementById('modal-confirm');
+            const originalText = confirmBtn.innerHTML;
+            confirmBtn.innerHTML = '<i data-lucide="loader" class="inline w-4 h-4 mr-2 animate-spin"></i>获取中...';
+            confirmBtn.disabled = true;
+            
+            const response = await fetch(`${API_BASE_URL}/api/fetch-models`, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + authToken 
+                },
+                body: JSON.stringify({ baseUrl, apiKey })
+            });
+            
+            confirmBtn.innerHTML = originalText;
+            confirmBtn.disabled = false;
+            
+            if (response.ok) {
+                const data = await response.json();
+                fetchedModels = data.models || [];
+                showModelSelectionDialog();
+                return true;
+            } else {
+                const error = await response.json();
+                showNotification(`获取失败: ${error.error}`, 'error');
+                return false;
+            }
+        } catch (error) {
+            showNotification('获取模型列表时发生错误', 'error');
+            return false;
+        }
+    });
+}
+
+// 显示模型选择对话框
+function showModelSelectionDialog() {
+    if (fetchedModels.length === 0) {
+        showModal('模型列表', `
+            <div class="text-center py-8">
+                <i data-lucide="info" class="w-16 h-16 text-gray-400 mx-auto mb-4"></i>
+                <h3 class="text-lg font-semibold text-gray-700 mb-2">未找到模型</h3>
+                <p class="text-gray-500">未能从AI服务获取到任何模型</p>
+            </div>
+        `, () => true);
+        return;
+    }
+    
+    const modelList = fetchedModels.map((model, index) => `
+        <label class="flex items-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50">
+            <input type="checkbox" class="model-checkbox rounded text-indigo-600 mr-3" data-index="${index}">
+            <div class="flex-1">
+                <div class="font-medium text-gray-900">${model.name}</div>
+                <div class="text-sm text-gray-500">ID: ${model.id}</div>
+            </div>
+        </label>
+    `).join('');
+    
+    showModal('选择模型', `
+        <div class="space-y-4">
+            <p class="text-gray-600">从获取的 ${fetchedModels.length} 个模型中选择需要的模型：</p>
+            <div class="max-h-96 overflow-y-auto space-y-2" id="model-list-container">
+                ${modelList}
+            </div>
+            <div class="flex items-center pt-2">
+                <input type="checkbox" id="select-all-models" class="mr-2 rounded text-indigo-600">
+                <label for="select-all-models" class="text-sm text-gray-700">全选</label>
+            </div>
+        </div>
+    `, () => {
+        const selectedModels = Array.from(document.querySelectorAll('.model-checkbox:checked'))
+            .map(checkbox => {
+                const index = parseInt(checkbox.dataset.index);
+                return {
+                    name: fetchedModels[index].name,
+                    id: fetchedModels[index].id,
+                    systemPrompt: '',
+                    selectedRag: false,
+                    boundModels: [] // 初始化绑定模型数组
+                };
+            });
+        
+        if (selectedModels.length === 0) {
+            showNotification('请选择至少一个模型', 'error');
+            return false;
+        }
+        
+        // 检查是否有重复的模型名称
+        const existingModelNames = models.map(m => m.name);
+        const duplicates = selectedModels.filter(m => existingModelNames.includes(m.name));
+        
+        if (duplicates.length > 0) {
+            showNotification(`以下模型已存在：${duplicates.map(m => m.name).join(', ')}`, 'error');
+            return false;
+        }
+        
+        // 添加选中的模型到现有模型列表
+        models = [...models, ...selectedModels];
+        saveModels();
+        renderModels();
+        showNotification(`成功添加 ${selectedModels.length} 个模型`, 'success');
+        return true;
+    });
+    
+    // 全选功能
+    document.getElementById('select-all-models').addEventListener('change', function() {
+        const checkboxes = document.querySelectorAll('.model-checkbox');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = this.checked;
+        });
+    });
+    
+    // 修复模型列表容器的滚动条显示
+    const container = document.getElementById('model-list-container');
+    if (container) {
+        container.addEventListener('scroll', function() {
+            this.scrollTop = this.scrollTop;
+        });
+    }
 }
 
 // 添加模型
-function addModel() {
+async function addModel() {
+    // 获取AI配置中选择的模型
+    let aiConfigModels = [];
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/ai-model-config`, {
+            headers: { 'Authorization': 'Bearer ' + authToken }
+        });
+        if (response.ok) {
+            const modelConfig = await response.json();
+            aiConfigModels = modelConfig.selectedModels || [];
+        }
+    } catch (error) {
+        console.error('Error loading AI config models:', error);
+    }
+    
+    // 获取已从AI服务获取的模型列表用于绑定
+    const availableModels = models
+        .filter(model => model.id && model.id === model.name) // 只包含从AI服务获取的模型
+        .map(model => model.id)
+        .filter(Boolean);
+    
+    // 合并AI配置模型和现有模型，优先显示AI配置中的模型
+    const allAvailableModels = [...new Set([...aiConfigModels, ...availableModels])];
+    
+    let modelOptions = '';
+    if (allAvailableModels.length > 0) {
+        modelOptions = allAvailableModels.map(modelId => {
+            const isFromAIConfig = aiConfigModels.includes(modelId);
+            return `<label class="flex items-center p-2 hover:bg-gray-50 rounded">
+                <input type="radio" name="bound-model" class="bound-model-radio mr-2 text-indigo-600" data-model="${modelId}">
+                <span>${modelId}</span>
+                ${isFromAIConfig ? '<span class="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">AI配置</span>' : ''}
+            </label>`;
+        }).join('');
+    } else {
+        modelOptions = '<div class="text-gray-500 text-center p-4">暂无可用模型，请先在AI配置中获取模型</div>';
+    }
+    
     showModal('添加新模型', `
-        <div>
-            <label class="block text-sm font-semibold text-gray-700 mb-2">模型名称 *</label>
-            <input type="text" id="model-name" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="例如：gpt-4, claude-3">
-        </div>
-        <div>
-            <label class="block text-sm font-semibold text-gray-700 mb-2">系统提示词</label>
-            <textarea id="model-prompt" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none" rows="4" placeholder="输入该模型的系统提示词（可选）"></textarea>
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">模型名称 *</label>
+                <input type="text" id="model-name" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="例如：我的客服模型">
+            </div>
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">绑定的AI模型 *</label>
+                <div class="border border-gray-200 rounded-lg p-3 max-h-40 overflow-y-auto">
+                    ${modelOptions}
+                </div>
+                <p class="text-xs text-gray-500 mt-1">必须绑定一个AI模型，用于实际的API调用</p>
+            </div>
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">系统提示词</label>
+                <textarea id="model-prompt" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none" rows="4" placeholder="输入该模型的系统提示词（可选）"></textarea>
+            </div>
+            <div class="flex items-center pt-2">
+                <input type="checkbox" id="model-rag" class="mr-2 rounded text-indigo-600">
+                <label for="model-rag" class="text-sm text-gray-700">启用RAG检索增强</label>
+            </div>
         </div>
     `, () => {
         const name = document.getElementById('model-name').value.trim();
         const systemPrompt = document.getElementById('model-prompt').value.trim();
+        const selectedRag = document.getElementById('model-rag').checked;
+        const selectedRadio = document.querySelector('.bound-model-radio:checked');
+        const boundModel = selectedRadio ? [selectedRadio.dataset.model] : [];
         
         if (!name) {
             showNotification('请输入模型名称', 'error');
+            return false;
+        }
+        
+        // 验证是否选择了绑定的AI模型
+        if (!selectedRadio || boundModel.length === 0) {
+            showNotification('请选择要绑定的AI模型', 'error');
             return false;
         }
         
@@ -1020,33 +1746,103 @@ function addModel() {
             return false;
         }
         
-        const newModel = { name, systemPrompt };
+        const newModel = { 
+            name, 
+            systemPrompt, 
+            selectedRag,
+            boundModels: boundModel // 保存绑定的模型（单选）
+        };
+        
         models.push(newModel);
         saveModels();
         renderModels();
         showNotification('模型添加成功', 'success');
+        
+        // 自动关闭模态框
+        hideModal();
         return true;
     });
 }
 
 // 编辑模型
-function editModel(index) {
+async function editModel(index) {
     const model = models[index];
+    
+    // 获取AI配置中选择的模型
+    let aiConfigModels = [];
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/ai-model-config`, {
+            headers: { 'Authorization': 'Bearer ' + authToken }
+        });
+        if (response.ok) {
+            const modelConfig = await response.json();
+            aiConfigModels = modelConfig.selectedModels || [];
+        }
+    } catch (error) {
+        console.error('Error loading AI config models:', error);
+    }
+    
+    // 获取已从AI服务获取的模型列表用于绑定
+    const availableModels = models
+        .filter(m => m.id && m.id === m.name) // 只包含从AI服务获取的模型
+        .map(m => m.id)
+        .filter(Boolean);
+    
+    // 合并AI配置模型和现有模型，优先显示AI配置中的模型
+    const allAvailableModels = [...new Set([...aiConfigModels, ...availableModels])];
+    
+    let modelOptions = '';
+    if (allAvailableModels.length > 0) {
+        modelOptions = allAvailableModels.map(modelId => {
+            const isChecked = model.boundModels && model.boundModels.includes(modelId) ? 'checked' : '';
+            const isFromAIConfig = aiConfigModels.includes(modelId);
+            return `<label class="flex items-center p-2 hover:bg-gray-50 rounded">
+                <input type="radio" name="bound-model" class="bound-model-radio mr-2 text-indigo-600" data-model="${modelId}" ${isChecked}>
+                <span>${modelId}</span>
+                ${isFromAIConfig ? '<span class="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">AI配置</span>' : ''}
+            </label>`;
+        }).join('');
+    } else {
+        modelOptions = '<div class="text-gray-500 text-center p-4">暂无可用模型，请先在AI配置中获取模型</div>';
+    }
+    
     showModal('编辑模型', `
-        <div>
-            <label class="block text-sm font-semibold text-gray-700 mb-2">模型名称 *</label>
-            <input type="text" id="model-name" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="例如：gpt-4, claude-3" value="${model.name}">
-        </div>
-        <div>
-            <label class="block text-sm font-semibold text-gray-700 mb-2">系统提示词</label>
-            <textarea id="model-prompt" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none" rows="4" placeholder="输入该模型的系统提示词（可选）">${model.systemPrompt}</textarea>
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">模型名称 *</label>
+                <input type="text" id="model-name" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="例如：我的客服模型" value="${model.name}">
+            </div>
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">绑定的AI模型 *</label>
+                <div class="border border-gray-200 rounded-lg p-3 max-h-40 overflow-y-auto">
+                    ${modelOptions}
+                </div>
+                <p class="text-xs text-gray-500 mt-1">必须绑定一个AI模型，用于实际的API调用</p>
+            </div>
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">系统提示词</label>
+                <textarea id="model-prompt" class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none" rows="4" placeholder="输入该模型的系统提示词（可选）">${model.systemPrompt || ''}</textarea>
+            </div>
+            <div class="flex items-center pt-2">
+                <input type="checkbox" id="model-rag" class="mr-2 rounded text-indigo-600" ${model.selectedRag ? 'checked' : ''}>
+                <label for="model-rag" class="text-sm text-gray-700">启用RAG检索增强</label>
+            </div>
         </div>
     `, () => {
         const name = document.getElementById('model-name').value.trim();
         const systemPrompt = document.getElementById('model-prompt').value.trim();
+        const selectedRag = document.getElementById('model-rag').checked;
+        const selectedRadio = document.querySelector('.bound-model-radio:checked');
+        const boundModel = selectedRadio ? [selectedRadio.dataset.model] : [];
         
         if (!name) {
             showNotification('请输入模型名称', 'error');
+            return false;
+        }
+        
+        // 验证是否选择了绑定的AI模型
+        if (!selectedRadio || boundModel.length === 0) {
+            showNotification('请选择要绑定的AI模型', 'error');
             return false;
         }
         
@@ -1056,10 +1852,19 @@ function editModel(index) {
             return false;
         }
         
-        models[index] = { name, systemPrompt };
+        models[index] = { 
+            name, 
+            systemPrompt, 
+            selectedRag,
+            boundModels: boundModel // 保存绑定的模型（单选）
+        };
+        
         saveModels();
         renderModels();
         showNotification('模型更新成功', 'success');
+        
+        // 自动关闭模态框
+        hideModal();
         return true;
     });
 }
@@ -1093,6 +1898,27 @@ function deleteModel(index) {
 // 保存模型配置
 async function saveModels() {
     try {
+        // 验证模型数据
+        for (let i = 0; i < models.length; i++) {
+            const model = models[i];
+            
+            // 确保所有模型都有必要的字段
+            if (!model.name) {
+                showNotification(`第${i+1}个模型缺少名称`, 'error');
+                return;
+            }
+            
+            // 确保 boundModels 是数组
+            if (!Array.isArray(model.boundModels)) {
+                model.boundModels = [];
+            }
+            
+            // 确保 selectedRag 是布尔值
+            if (typeof model.selectedRag !== 'boolean') {
+                model.selectedRag = false;
+            }
+        }
+        
         const response = await fetch(`${API_BASE_URL}/api/models`, {
             method: 'POST',
             headers: { 
@@ -1105,7 +1931,8 @@ async function saveModels() {
         if (response.ok) {
             showNotification('模型配置保存成功', 'success');
         } else {
-            showNotification('模型配置保存失败', 'error');
+            const error = await response.json();
+            showNotification(`模型配置保存失败: ${error.error}`, 'error');
         }
     } catch (error) {
         showNotification('模型配置保存请求失败', 'error');

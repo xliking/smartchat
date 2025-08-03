@@ -61,11 +61,17 @@ async function handleRequest(request, env) {
         if (path === "/api/models") {
             return handleModels(request, env, corsHeaders);
         }
+        if (path === "/api/fetch-models") {
+            return handleFetchModels(request, env, corsHeaders);
+        }
         if (path === "/api/ai-config") {
             return handleAiConfig(request, env, corsHeaders);
         }
         if (path === "/api/rag-config") {
             return handleRagConfig(request, env, corsHeaders);
+        }
+        if (path === "/api/ai-model-config") {
+            return handleAiModelConfig(request, env, corsHeaders);
         }
         if (path === "/api/statistics") {
             return handleStatistics(request, env, corsHeaders);
@@ -75,6 +81,9 @@ async function handleRequest(request, env) {
         }
         if (path === "/v1/chat/completions") {
             return handleChatCompletions(request, env, corsHeaders);
+        }
+        if (path === "/v1/models") {
+            return handleV1Models(request, env, corsHeaders);
         }
         return new Response("API Not Found", { status: 404, headers: corsHeaders });
     } catch (error) {
@@ -327,6 +336,27 @@ async function handleRagConfig(request, env, corsHeaders) {
     return new Response("Method not allowed", { status: 405, headers });
 }
 __name(handleRagConfig, "handleRagConfig");
+async function handleAiModelConfig(request, env, corsHeaders) {
+    const headers = { ...corsHeaders, "Content-Type": "application/json" };
+    if (!await verifyAdmin(request, env)) {
+        return new Response(JSON.stringify({ error: "\u672A\u6388\u6743" }), {
+            status: 401,
+            headers
+        });
+    }
+    if (request.method === "GET") {
+        const configData = await env.AI_KV.get("AI_MODEL_CONFIG");
+        const config = configData ? JSON.parse(configData) : { selectedModels: [], baseUrl: "" };
+        return new Response(JSON.stringify(config), { headers });
+    }
+    if (request.method === "POST") {
+        const config = await request.json();
+        await env.AI_KV.put("AI_MODEL_CONFIG", JSON.stringify(config));
+        return new Response(JSON.stringify({ success: true }), { headers });
+    }
+    return new Response("Method not allowed", { status: 405, headers });
+}
+__name(handleAiModelConfig, "handleAiModelConfig");
 async function handleStatistics(request, env, corsHeaders) {
     const headers = { ...corsHeaders, "Content-Type": "application/json" };
     if (!await verifyAdmin(request, env)) {
@@ -408,24 +438,123 @@ async function handleStatistics(request, env, corsHeaders) {
     return new Response("Method not allowed", { status: 405, headers });
 }
 __name(handleStatistics, "handleStatistics");
-async function handleModels(request, env, corsHeaders) {
+async function handleFetchModels(request, env, corsHeaders) {
     const headers = { ...corsHeaders, "Content-Type": "application/json" };
     if (!await verifyAdmin(request, env)) {
-        return new Response(JSON.stringify({ error: "\u672A\u6388\u6743" }), {
+        return new Response(JSON.stringify({ error: "未授权" }), {
             status: 401,
             headers
         });
     }
+    
+    if (request.method !== "POST") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), {
+            status: 405,
+            headers
+        });
+    }
+    
+    try {
+        const { baseUrl, apiKey } = await request.json();
+        
+        // Validate inputs
+        if (!baseUrl || !apiKey) {
+            return new Response(JSON.stringify({ error: "BaseURL和API Key都是必填项" }), {
+                status: 400,
+                headers
+            });
+        }
+        
+        // Fetch models from the AI service
+        const response = await fetch(`${baseUrl}/v1/models`, {
+            method: "GET",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json"
+            }
+        });
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            return new Response(JSON.stringify({ 
+                error: `获取模型列表失败: ${response.status} ${response.statusText}`,
+                details: errorText
+            }), {
+                status: response.status,
+                headers
+            });
+        }
+        
+        const modelsData = await response.json();
+        
+        // Extract model names from the response
+        let models = [];
+        if (modelsData.data && Array.isArray(modelsData.data)) {
+            models = modelsData.data.map(model => ({
+                id: model.id,
+                name: model.id,
+                object: model.object,
+                created: model.created,
+                owned_by: model.owned_by
+            }));
+        }
+        
+        return new Response(JSON.stringify({ models }), { headers });
+    } catch (error) {
+        console.error("Fetch models error:", error);
+        return new Response(JSON.stringify({ error: "获取模型列表时发生错误: " + error.message }), {
+            status: 500,
+            headers
+        });
+    }
+}
+
+async function handleModels(request, env, corsHeaders) {
+    const headers = { ...corsHeaders, "Content-Type": "application/json" };
+    if (!await verifyAdmin(request, env)) {
+        return new Response(JSON.stringify({ error: "未授权" }), {
+            status: 401,
+            headers
+        });
+    }
+    
     if (request.method === "GET") {
         const modelsData = await env.AI_KV.get("models");
         const models = modelsData ? JSON.parse(modelsData) : [];
         return new Response(JSON.stringify(models), { headers });
     }
+    
     if (request.method === "POST") {
         const models = await request.json();
+        
+        // Validate that each model has a unique name
+        const modelNames = models.map(model => model.name);
+        const uniqueNames = [...new Set(modelNames)];
+        if (modelNames.length !== uniqueNames.length) {
+            return new Response(JSON.stringify({ error: "模型名称必须唯一" }), {
+                status: 400,
+                headers
+            });
+        }
+        
+        // Validate that each model has required fields
+        for (const model of models) {
+            if (!model.name) {
+                return new Response(JSON.stringify({ error: "模型名称不能为空" }), {
+                    status: 400,
+                    headers
+                });
+            }
+            // Ensure each model has a selectedRag field (default to false if not provided)
+            if (model.selectedRag === undefined) {
+                model.selectedRag = false;
+            }
+        }
+        
         await env.AI_KV.put("models", JSON.stringify(models));
         return new Response(JSON.stringify({ success: true }), { headers });
     }
+    
     return new Response("Method not allowed", { status: 405, headers });
 }
 __name(handleModels, "handleModels");
@@ -528,6 +657,64 @@ async function handleGetFile(request, env, corsHeaders) {
     }
 }
 __name(handleGetFile, "handleGetFile");
+async function getConfiguration(env) {
+    const aiConfigData = await env.AI_KV.get("AI_CONFIG");
+    const ragConfigData = await env.AI_KV.get("RAG_CONFIG");
+    const systemConfigData = await env.AI_KV.get("SYSTEM_CONFIG");
+    
+    return {
+        ai: aiConfigData ? JSON.parse(aiConfigData) : {},
+        rag: ragConfigData ? JSON.parse(ragConfigData) : {},
+        system: systemConfigData ? JSON.parse(systemConfigData) : {}
+    };
+}
+
+async function handleV1Models(request, env, corsHeaders) {
+    const headers = { ...corsHeaders, "Content-Type": "application/json" };
+    if (request.method !== "GET") {
+        return new Response("Method not allowed", { status: 405, headers });
+    }
+    const apiKey = extractApiKey(request);
+    if (!apiKey || !await verifyApiKey(apiKey, env)) {
+        return new Response(JSON.stringify({ error: "Invalid API key" }), {
+            status: 401,
+            headers
+        });
+    }
+    try {
+        // Get custom models from KV store
+        const modelsData = await env.AI_KV.get("models");
+        const customModels = modelsData ? JSON.parse(modelsData) : [];
+        
+        const models = [];
+        if (customModels.length > 0) {
+            // Use custom models if available
+            customModels.forEach(model => {
+                models.push({
+                    id: model.name,
+                    object: "model",
+                    created: Math.floor(Date.now() / 1000),
+                    owned_by: "ai-gateway",
+                    permission: [],
+                    root: model.name,
+                    parent: null
+                });
+            });
+        } 
+        // If no custom models, return empty list instead of default gpt-3.5-turbo
+        return new Response(JSON.stringify({
+            object: "list",
+            data: models
+        }), { headers });
+    } catch (error) {
+        console.error("Models API error:", error);
+        return new Response(JSON.stringify({ error: "Internal server error" }), {
+            status: 500,
+            headers
+        });
+    }
+}
+__name(handleV1Models, "handleV1Models");
 async function handleChatCompletions(request, env, corsHeaders) {
     const headers = { ...corsHeaders, "Content-Type": "application/json" };
     if (request.method !== "POST") {
@@ -595,19 +782,28 @@ async function handleChatCompletions(request, env, corsHeaders) {
     
     // Store user message for potential Notion workflow
     const userMessage = lastMessage.content;
-    const ragContext = await performRAG(lastMessage.content, env);
-    console.log("🤖 RAG上下文结果:", ragContext ? `获取到${ragContext.length}字符` : "无结果");
-    if (ragContext) {
-        console.log("📝 RAG上下文内容预览:", ragContext.substring(0, 200) + (ragContext.length > 200 ? "..." : ""));
-        const contextMessage = {
-            role: "system",
-            content: `\u76F8\u5173\u53C2\u8003\u4FE1\u606F\uFF1A
+    
+    // Check if RAG is enabled for this model
+    const isRagEnabled = modelConfig ? modelConfig.selectedRag === true : false;
+    let ragContext = null;
+    
+    if (isRagEnabled) {
+        ragContext = await performRAG(lastMessage.content, env);
+        console.log("🤖 RAG上下文结果:", ragContext ? `获取到${ragContext.length}字符` : "无结果");
+        if (ragContext) {
+            console.log("📝 RAG上下文内容预览:", ragContext.substring(0, 200) + (ragContext.length > 200 ? "..." : ""));
+            const contextMessage = {
+                role: "system",
+                content: `\u76F8\u5173\u53C2\u8003\u4FE1\u606F\uFF1A
 ${ragContext}`
-        };
-        limitedMessages.unshift(contextMessage);
-        console.log("✅ RAG上下文已添加到消息中");
+            };
+            limitedMessages.unshift(contextMessage);
+            console.log("✅ RAG上下文已添加到消息中");
+        } else {
+            console.log("❌ 未获取到RAG上下文，将不使用知识库信息");
+        }
     } else {
-        console.log("❌ 未获取到RAG上下文，将不使用知识库信息");
+        console.log("🚫 此模型未启用RAG功能");
     }
     const systemPrompt = modelSystemPrompt || systemConfig.systemPrompt;
     if (systemPrompt) {
@@ -618,6 +814,13 @@ ${ragContext}`
     }
     const aiConfigData = await env.AI_KV.get("AI_CONFIG");
     const aiConfig = JSON.parse(aiConfigData);
+    
+    // If model has bound AI models, use the first one
+    let aiModel = aiConfig.model;
+    if (modelConfig && modelConfig.boundModels && modelConfig.boundModels.length > 0) {
+        aiModel = modelConfig.boundModels[0]; // 使用第一个绑定的模型
+    }
+    
     try {
         const aiResponse = await fetch(`${aiConfig.baseurl}/v1/chat/completions`, {
             method: "POST",
@@ -626,7 +829,7 @@ ${ragContext}`
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                model: aiConfig.model,
+                model: aiModel, // 使用绑定的模型或默认模型
                 messages: limitedMessages,
                 stream
             }),
@@ -662,10 +865,7 @@ ${ragContext}`
                         try {
                             const chunk = new TextDecoder().decode(value);
                             buffer += chunk;
-                            
-                            // Process complete lines from buffer
                             const lines = buffer.split('\n');
-                            // Keep the last potentially incomplete line in buffer
                             buffer = lines.pop() || "";
                             
                             for (const line of lines) {

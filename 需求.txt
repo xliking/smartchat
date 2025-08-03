@@ -15,3 +15,5 @@
 （11） workers 的页面需要好看，简约大气，一定要好看美观，功能要完整！！！
 
 
+你说我现在保存历史对话有作用吗？因为每次客户端对话都会携带对话历史记录的。并且我需要像 别的API一样，请求 /v1/models,Authorization: Bearer your-api-key                                                                         │
+Content-Type: application/json ,也会返回对应的模型json
