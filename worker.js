@@ -22,6 +22,44 @@ var worker_default = {
         return await handleRequest(request, env);
     }
 };
+// 轮询重试机制
+async function fetchWithRetry(url, options, apiKeys, currentIndex = 0, retryCount = 0) {
+    const maxRetries = apiKeys.length * 2; // 每个key最多重试2次
+    
+    if (retryCount >= maxRetries) {
+        throw new Error(`All API keys failed after ${maxRetries} retries`);
+    }
+    
+    const apiKey = apiKeys[currentIndex % apiKeys.length];
+    const authHeader = { ...options.headers, "Authorization": `Bearer ${apiKey}` };
+    
+    try {
+        const response = await fetch(url, { ...options, headers: authHeader });
+        
+        // 如果是401或403错误，尝试下一个key
+        if ((response.status === 401 || response.status === 403) && apiKeys.length > 1) {
+            console.log(`API key ${currentIndex + 1} failed with status ${response.status}, trying next key`);
+            return fetchWithRetry(url, options, apiKeys, currentIndex + 1, retryCount + 1);
+        }
+        
+        // 如果是其他错误，重试当前key
+        if (!response.ok) {
+            console.log(`API key ${currentIndex + 1} failed with status ${response.status}, retrying...`);
+            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, Math.floor(retryCount / apiKeys.length))));
+            return fetchWithRetry(url, options, apiKeys, currentIndex, retryCount + 1);
+        }
+        
+        return response;
+    } catch (error) {
+        console.log(`API key ${currentIndex + 1} failed with error: ${error.message}, retrying...`);
+        if (retryCount < maxRetries - 1) {
+            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, Math.floor(retryCount / apiKeys.length))));
+            return fetchWithRetry(url, options, apiKeys, currentIndex, retryCount + 1);
+        }
+        throw error;
+    }
+}
+
 async function handleRequest(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -937,7 +975,9 @@ async function handleStatistics(request, env, corsHeaders) {
         ORDER BY created_at DESC 
         LIMIT 5
       `).all();
-            const apiKeysCount = await env.AI_KV.list({ prefix: "API_KEY_" });
+            const apiKeysData = await env.AI_KV.get("API_KEYS");
+            const apiKeys = apiKeysData ? JSON.parse(apiKeysData) : [];
+            const activeKeysCount = apiKeys.filter(key => key.active).length;
             let totalRequestsQuery = { total_requests: 0 };
             try {
                 totalRequestsQuery = await env.AI_DB.prepare(`
@@ -966,7 +1006,7 @@ async function handleStatistics(request, env, corsHeaders) {
                 usedStorage: usedStorage,
                 totalStorage: totalAvailableStorage,
                 storageUsagePercent: Math.round((usedStorage / totalAvailableStorage) * 100 * 100) / 100,
-                activeKeys: apiKeysCount.keys.length || 0,
+                activeKeys: activeKeysCount,
                 recentFiles: recentFilesQuery.results || [],
                 totalRequests: totalRequestsQuery.total_requests || 0,
                 systemStatus: "online",
@@ -1365,6 +1405,15 @@ ${ragContext}`
     const aiConfigData = await env.AI_KV.get("AI_CONFIG");
     const aiConfig = JSON.parse(aiConfigData);
     
+    // 支持 API Key 轮询
+    const apiKeys = Array.isArray(aiConfig.apikeys) ? aiConfig.apikeys : (aiConfig.apikey ? [aiConfig.apikey] : []);
+    if (apiKeys.length === 0) {
+        return new Response(JSON.stringify({ error: "No API keys configured" }), {
+            status: 500,
+            headers
+        });
+    }
+    
     // If model has bound AI models, use the first one
     let aiModel = aiConfig.model;
     if (modelConfig && modelConfig.boundModels && modelConfig.boundModels.length > 0) {
@@ -1372,10 +1421,9 @@ ${ragContext}`
     }
     
     try {
-        const aiResponse = await fetch(`${aiConfig.baseurl}/v1/chat/completions`, {
+        const aiResponse = await fetchWithRetry(`${aiConfig.baseurl}/v1/chat/completions`, {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${aiConfig.apikey}`,
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
@@ -1385,7 +1433,7 @@ ${ragContext}`
             }),
             // Add timeout for long requests
             signal: AbortSignal.timeout(systemConfig.requestTimeout || 300000)
-        });
+        }, apiKeys);
         await saveConversation(apiKey, limitedMessages, env);
         if (stream) {
             // Check if the response is OK before streaming
@@ -1529,12 +1577,21 @@ __name(handleChatCompletions, "handleChatCompletions");
 async function handleImageGeneration(prompt, env, stream, headers) {
     const aiConfigData = await env.AI_KV.get("AI_CONFIG");
     const aiConfig = JSON.parse(aiConfigData);
+    
+    // 支持 API Key 轮询
+    const apiKeys = Array.isArray(aiConfig.apikeys) ? aiConfig.apikeys : (aiConfig.apikey ? [aiConfig.apikey] : []);
+    if (apiKeys.length === 0) {
+        return new Response(JSON.stringify({ error: "No API keys configured" }), {
+            status: 500,
+            headers
+        });
+    }
+    
     const imagePrompt = prompt.substring(1).trim();
     try {
-        const response = await fetch(`${aiConfig.baseurl}/v1/images/generations`, {
+        const response = await fetchWithRetry(`${aiConfig.baseurl}/v1/images/generations`, {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${aiConfig.apikey}`,
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
@@ -1543,7 +1600,7 @@ async function handleImageGeneration(prompt, env, stream, headers) {
                 image_size: "1024x1024",
                 batch_size: 1
             })
-        });
+        }, apiKeys);
         const result = await response.json();
         const chatResponse = {
             id: "img-" + nanoid(),

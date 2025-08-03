@@ -21,7 +21,8 @@
       "Bash(wrangler kv:key get:*)",
       "Bash(wrangler kv key get:*)",
       "Bash(wrangler tail:*)",
-      "Bash(wrangler logpush:*)"
+      "Bash(wrangler logpush:*)",
+      "Bash(npm run dev:*)"
     ],
     "deny": []
   }

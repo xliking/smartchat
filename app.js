@@ -138,7 +138,8 @@ async function loadConfigs() {
         if (aiConfigResponse.ok) {
             const aiConfig = await aiConfigResponse.json();
             document.getElementById('ai-baseurl').value = aiConfig.baseurl || '';
-            document.getElementById('ai-apikey').value = aiConfig.apikey || '';
+            const apiKeys = Array.isArray(aiConfig.apikeys) ? aiConfig.apikeys.join('\n') : (aiConfig.apikeys || aiConfig.apikey || '');
+            document.getElementById('ai-apikeys').value = apiKeys;
             
             // 加载已选择的模型并显示
             await loadSelectedModelsFromConfig(aiConfig);
@@ -185,7 +186,7 @@ document.getElementById('ai-config-form').addEventListener('submit', async (e) =
     
     const config = {
         baseurl: document.getElementById('ai-baseurl').value,
-        apikey: document.getElementById('ai-apikey').value,
+        apikeys: document.getElementById('ai-apikeys').value.split(/[\n,]+/).map(key => key.trim()).filter(key => key),
         model: document.getElementById('ai-model').value
     };
 
@@ -212,10 +213,10 @@ document.getElementById('ai-config-form').addEventListener('submit', async (e) =
 // 获取AI模型列表
 document.getElementById('fetch-ai-models').addEventListener('click', async () => {
     const baseUrl = document.getElementById('ai-baseurl').value.trim();
-    const apiKey = document.getElementById('ai-apikey').value.trim();
+    const apiKey = document.getElementById('ai-apikeys').value.split(/[\n,]+/).map(key => key.trim()).filter(key => key)[0];
     
     if (!baseUrl || !apiKey) {
-        showNotification('请先填写BaseURL和API Key', 'error');
+        showNotification('请先填写BaseURL和至少一个API Key', 'error');
         return;
     }
     
@@ -223,7 +224,9 @@ document.getElementById('fetch-ai-models').addEventListener('click', async () =>
         // 显示加载状态
         const fetchBtn = document.getElementById('fetch-ai-models');
         const originalHTML = fetchBtn.innerHTML;
-        fetchBtn.innerHTML = '<i data-lucide="loader" class="inline w-5 h-5 animate-spin"></i>';
+        const originalClasses = fetchBtn.className;
+        fetchBtn.innerHTML = '<i data-lucide="loader" class="inline w-5 h-5 animate-spin"></i> 获取中...';
+        fetchBtn.className = originalClasses.replace('bg-blue-600 hover:bg-blue-700', 'bg-gray-400 cursor-not-allowed');
         fetchBtn.disabled = true;
         
         const response = await fetch(`${API_BASE_URL}/api/fetch-models`, {
@@ -237,6 +240,7 @@ document.getElementById('fetch-ai-models').addEventListener('click', async () =>
         
         // 恢复按钮状态
         fetchBtn.innerHTML = originalHTML;
+        fetchBtn.className = originalClasses;
         fetchBtn.disabled = false;
         lucide.createIcons(); // 重新渲染图标
         
@@ -276,7 +280,7 @@ document.getElementById('fetch-ai-models').addEventListener('click', async () =>
                                 ''
                             }
                         </div>
-                        <div class="max-h-64 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                        <div class="max-h-96 overflow-y-auto border border-gray-200 rounded-lg p-3">
                             ${options}
                         </div>
                         <div class="flex items-center justify-between">
@@ -308,7 +312,7 @@ document.getElementById('fetch-ai-models').addEventListener('click', async () =>
                     // 自动关闭模态框
                     hideModal();
                     return true;
-                });
+                }, { width: '4xl' });
                 
                 // 全选功能 - 只选择新模型（未被选择的模型）
                 document.getElementById('select-all-models-modal').addEventListener('change', function() {
@@ -332,7 +336,8 @@ document.getElementById('fetch-ai-models').addEventListener('click', async () =>
     } catch (error) {
         // 恢复按钮状态
         const fetchBtn = document.getElementById('fetch-ai-models');
-        fetchBtn.innerHTML = '<i data-lucide="download" class="inline w-5 h-5"></i>';
+        fetchBtn.innerHTML = originalHTML;
+        fetchBtn.className = originalClasses;
         fetchBtn.disabled = false;
         lucide.createIcons(); // 重新渲染图标
         showNotification('获取模型列表时发生错误: ' + error.message, 'error');
@@ -505,28 +510,89 @@ function updateAIConfigModelDisplay(selectedModels) {
 // 启用/禁用获取模型按钮
 function updateFetchModelsButtonState() {
     const baseUrl = document.getElementById('ai-baseurl').value.trim();
-    const apiKey = document.getElementById('ai-apikey').value.trim();
+    const apiKeys = document.getElementById('ai-apikeys').value.split(/[\n,]+/).map(key => key.trim()).filter(key => key);
     const fetchBtn = document.getElementById('fetch-ai-models');
     
     if (fetchBtn) {
-        fetchBtn.disabled = !baseUrl || !apiKey;
+        fetchBtn.disabled = !baseUrl || apiKeys.length === 0;
     }
 }
+
+// 测试所有 API Key
+document.getElementById('test-api-keys').addEventListener('click', async () => {
+    const baseUrl = document.getElementById('ai-baseurl').value.trim();
+    const apiKeys = document.getElementById('ai-apikeys').value.split(/[\n,]+/).map(key => key.trim()).filter(key => key);
+    
+    if (!baseUrl || apiKeys.length === 0) {
+        showNotification('请先填写BaseURL和至少一个API Key', 'error');
+        return;
+    }
+    
+    const testBtn = document.getElementById('test-api-keys');
+    const statusSpan = document.getElementById('api-keys-status');
+    
+    testBtn.disabled = true;
+    statusSpan.textContent = '测试中...';
+    
+    let successCount = 0;
+    let failCount = 0;
+    
+    for (let i = 0; i < apiKeys.length; i++) {
+        const apiKey = apiKeys[i];
+        try {
+            const response = await fetch(`${baseUrl}/v1/models`, {
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 10000
+            });
+            
+            if (response.ok) {
+                successCount++;
+            } else {
+                failCount++;
+            }
+        } catch (error) {
+            failCount++;
+        }
+        
+        // 更新进度
+        statusSpan.textContent = `测试进度: ${i + 1}/${apiKeys.length} (成功: ${successCount}, 失败: ${failCount})`;
+        
+        // 添加延迟避免请求过快
+        if (i < apiKeys.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+    }
+    
+    testBtn.disabled = false;
+    
+    if (failCount === 0) {
+        statusSpan.textContent = `✅ 所有 ${successCount} 个 API Key 都可用`;
+        statusSpan.className = 'ml-2 text-sm text-green-600';
+    } else if (successCount === 0) {
+        statusSpan.textContent = `❌ 所有 ${failCount} 个 API Key 都不可用`;
+        statusSpan.className = 'ml-2 text-sm text-red-600';
+    } else {
+        statusSpan.textContent = `⚠️ ${successCount} 个可用, ${failCount} 个不可用`;
+        statusSpan.className = 'ml-2 text-sm text-yellow-600';
+    }
+});
 
 // 初始化AI配置表单监听器
 function initAIConfigListeners() {
     const baseUrlInput = document.getElementById('ai-baseurl');
-    const apiKeyInput = document.getElementById('ai-apikey');
+    const apiKeysInput = document.getElementById('ai-apikeys');
     const clearModelsBtn = document.getElementById('clear-models-btn');
     
     if (baseUrlInput) {
         baseUrlInput.addEventListener('input', updateFetchModelsButtonState);
     }
-    
-    if (apiKeyInput) {
-        apiKeyInput.addEventListener('input', updateFetchModelsButtonState);
+    if (apiKeysInput) {
+        apiKeysInput.addEventListener('input', updateFetchModelsButtonState);
     }
-    
+      
     if (clearModelsBtn) {
         clearModelsBtn.addEventListener('click', clearAllSelectedModels);
     }
@@ -1410,44 +1476,35 @@ function renderModels() {
     // 先过滤出自定义模型（name和id不相等或者没有id的模型）
     const customModels = models.filter(model => !model.id || model.id !== model.name);
     
+    // 在模型列表上方添加控制按钮
+    const controlsHtml = `
+        <div class="flex justify-between items-center mb-6">
+            <div class="text-sm text-gray-600">
+                共 ${customModels.length} 个模型
+            </div>
+            <div class="flex space-x-3">
+                <button onclick="addModel()" class="btn-primary px-4 py-2 text-white font-semibold rounded-xl hover:bg-blue-600 transition-colors">
+                    <i data-lucide="plus" class="inline w-4 h-4 mr-2"></i>
+                    添加模型
+                </button>
+            </div>
+        </div>
+    `;
+    
     if (customModels.length === 0) {
-        container.innerHTML = `
+        container.innerHTML = controlsHtml + `
             <div class="glass-card rounded-2xl p-12 text-center">
                 <i data-lucide="brain" class="w-16 h-16 text-gray-400 mx-auto mb-4"></i>
                 <h3 class="text-lg font-semibold text-gray-700 mb-2">暂无模型配置</h3>
                 <p class="text-gray-500 mb-6">点击上方按钮添加您的第一个AI模型</p>
-                <div class="flex flex-col sm:flex-row gap-4 justify-center">
-                    <button onclick="addModel()" class="btn-primary px-6 py-3 text-white font-semibold rounded-xl">
-                        <i data-lucide="plus" class="inline w-5 h-5 mr-2"></i>
-                        手动添加
-                    </button>
-                    <button onclick="fetchModelsFromAPI()" class="px-6 py-3 bg-indigo-100 text-indigo-700 font-semibold rounded-xl hover:bg-indigo-200 transition-colors">
-                        <i data-lucide="download" class="inline w-5 h-5 mr-2"></i>
-                        获取模型列表
-                    </button>
-                </div>
             </div>
         `;
         lucide.createIcons();
         return;
     }
     
-    // 显示"获取模型列表"按钮
-    const header = document.querySelector('#models-section .flex.items-center.justify-between');
-    if (header) {
-        let fetchBtn = document.getElementById('fetch-models-btn');
-        if (!fetchBtn) {
-            fetchBtn = document.createElement('button');
-            fetchBtn.id = 'fetch-models-btn';
-            fetchBtn.className = 'px-6 py-3 bg-indigo-100 text-indigo-700 font-semibold rounded-xl hover:bg-indigo-200 transition-colors';
-            fetchBtn.innerHTML = '<i data-lucide="download" class="inline w-5 h-5 mr-2"></i>获取模型列表';
-            fetchBtn.onclick = fetchModelsFromAPI;
-            
-            // 安全地添加按钮 - 直接添加到header而不是查找子元素
-            header.appendChild(fetchBtn);
-            lucide.createIcons();
-        }
-    }
+    // 显示控制按钮
+    container.innerHTML = controlsHtml;
     
     customModels.forEach((model, index) => {
         // 显示绑定的模型
@@ -1520,9 +1577,7 @@ function toggleRag(index) {
 
 // 初始化模型管理事件
 function initModelManagement() {
-    document.getElementById('add-model-btn').addEventListener('click', async () => {
-        await addModel();
-    });
+    // 添加模型按钮现在直接在HTML中使用onclick属性
 }
 
 // 从AI服务获取模型列表
@@ -1541,7 +1596,7 @@ async function fetchModelsFromAPI() {
     }
     
     // 检查是否已配置AI服务
-    if (!aiConfig.baseurl || !aiConfig.apikey) {
+    if (!aiConfig.baseurl || (!aiConfig.apikeys && !aiConfig.apikey)) {
         showNotification('请先在系统配置中完整填写AI模型配置的BaseURL和API Key', 'error');
         return;
     }
@@ -1556,7 +1611,7 @@ async function fetchModelsFromAPI() {
             </div>
             <div>
                 <label class="block text-sm font-semibold text-gray-700 mb-2">API Key *</label>
-                <input type="password" id="fetch-apikey" class="w-full px-4 py-3 border border-gray-200 rounded-xl bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" value="${aiConfig.apikey}" readonly>
+                <input type="password" id="fetch-apikey" class="w-full px-4 py-3 border border-gray-200 rounded-xl bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" value="${aiConfig.apikeys ? aiConfig.apikeys.join(', ') : aiConfig.apikey}" readonly>
                 <p class="text-xs text-gray-500 mt-1">自动从系统配置读取，不可修改</p>
             </div>
             <div class="bg-blue-50 border border-blue-200 rounded-lg p-3">
@@ -1565,10 +1620,10 @@ async function fetchModelsFromAPI() {
         </div>
     `, async () => {
         const baseUrl = aiConfig.baseurl;
-        const apiKey = aiConfig.apikey;
+        const apiKey = aiConfig.apikeys ? aiConfig.apikeys[0] : aiConfig.apikey;
         
         if (!baseUrl || !apiKey) {
-            showNotification('请填写BaseURL和API Key', 'error');
+            showNotification('配置错误：缺少BaseURL或API Key', 'error');
             return false;
         }
         
@@ -1675,7 +1730,7 @@ function showModelSelectionDialog() {
         renderModels();
         showNotification(`成功添加 ${selectedModels.length} 个模型`, 'success');
         return true;
-    });
+    }, { width: '4xl' });
     
     // 全选功能
     document.getElementById('select-all-models').addEventListener('change', function() {
@@ -1975,7 +2030,7 @@ async function saveModels() {
 // 模态框管理
 let currentModalCallback = null;
 
-function showModal(title, content, onConfirm) {
+function showModal(title, content, onConfirm, options = {}) {
     const overlay = document.getElementById('modal-overlay');
     const modalContent = document.getElementById('modal-content');
     const titleEl = document.getElementById('modal-title');
@@ -1984,6 +2039,11 @@ function showModal(title, content, onConfirm) {
     titleEl.textContent = title;
     bodyEl.innerHTML = content;
     currentModalCallback = onConfirm;
+    
+    // 应用自定义选项
+    if (options.width) {
+        modalContent.className = modalContent.className.replace(/max-w-\w+/, `max-w-${options.width}`);
+    }
     
     overlay.classList.remove('hidden');
     overlay.classList.add('modal-entering');
@@ -1996,6 +2056,7 @@ function showModal(title, content, onConfirm) {
 
 function hideModal() {
     const overlay = document.getElementById('modal-overlay');
+    const modalContent = document.getElementById('modal-content');
     
     overlay.classList.remove('modal-show');
     overlay.classList.add('modal-leaving');
@@ -2004,6 +2065,8 @@ function hideModal() {
         overlay.classList.add('hidden');
         overlay.classList.remove('modal-leaving');
         currentModalCallback = null;
+        // 重置模态框宽度为默认值
+        modalContent.className = modalContent.className.replace(/max-w-\w+/, 'max-w-md');
     }, 300);
 }
 
