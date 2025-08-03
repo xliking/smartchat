@@ -9,8 +9,8 @@ CREATE TABLE IF NOT EXISTS files (
     id TEXT PRIMARY KEY,                -- 文件唯一标识 (UUID)
     name TEXT NOT NULL,                 -- 文件名或文本标题
     type TEXT NOT NULL,                 -- 文件类型 ('file' 或 'text')
-    content TEXT,                       -- 文本内容 (仅type='text'时使用)
-    r2_key TEXT,                        -- R2存储键值 (仅type='file'时使用)
+    content TEXT,
+    r2_key TEXT,
     embedding TEXT,                     -- 嵌入向量 (JSON格式字符串)
     created_at TEXT NOT NULL            -- 创建时间 (ISO 8601格式)
 );

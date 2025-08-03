@@ -22,7 +22,11 @@
       "Bash(wrangler kv key get:*)",
       "Bash(wrangler tail:*)",
       "Bash(wrangler logpush:*)",
-      "Bash(npm run dev:*)"
+      "Bash(npm run dev:*)",
+      "Bash(npm run tail:*)",
+      "Bash(cmd /c \"set HTTP_PROXY=http://127.0.0.1:7897 && set HTTPS_PROXY=http://127.0.0.1:7897 && wrangler tail --format=pretty\")",
+      "Bash(powershell:*)",
+      "Bash(curl:*)"
     ],
     "deny": []
   }
