@@ -1166,7 +1166,20 @@ async function loadFiles(page = 1) {
                 
                 const fileTypeIcon = getFileTypeIcon(file.type);
                 const fileTypeColor = getFileTypeColor(file.type);
-                const fileSize = file.content ? `${file.content.length.toLocaleString()} 字符` : 'N/A'; // 显示字符数
+                // 优先使用content_length，如果没有则检查content，都没有则显示字符数未知
+                let fileSize = 'N/A';
+                if (file.content_length !== null && file.content_length !== undefined) {
+                    fileSize = `${file.content_length.toLocaleString()} 字符`;
+                } else if (file.content) {
+                    fileSize = `${file.content.length.toLocaleString()} 字符`;
+                } else {
+                    // 对于上传的文件类型，显示为未知字符数
+                    if (file.type === 'file') {
+                        fileSize = '文件内容字符数未知';
+                    } else {
+                        fileSize = '0 字符';
+                    }
+                }
                 const createdDate = new Date(file.created_at || file.created).toLocaleString();
                 
                 div.innerHTML = `
@@ -1241,8 +1254,14 @@ async function previewFile(fileId, fileName, fileType) {
         
         if (response.ok) {
             const fileData = await response.json();
+            
+            // 动态调整模态框大小用于文件预览
+            const modalContent = document.getElementById('modal-content');
+            modalContent.style.maxWidth = '50vw';
+            modalContent.style.width = '50vw';
+            
             showModal(`文件预览 - ${fileName}`, `
-                <div class="max-w-4xl">
+                <div>
                     <div class="mb-4 p-3 bg-gray-50 rounded-lg">
                         <div class="grid grid-cols-2 gap-4 text-sm">
                             <div><span class="font-medium">文件名:</span> ${fileName}</div>
@@ -1256,6 +1275,20 @@ async function previewFile(fileId, fileName, fileType) {
                     </div>
                 </div>
             `);
+            
+            // 当模态框关闭时恢复原始大小
+            const restoreModalSize = () => {
+                modalContent.style.maxWidth = '';
+                modalContent.style.width = '';
+            };
+            
+            // 监听模态框关闭事件
+            const originalHideModal = window.hideModal;
+            window.hideModal = function() {
+                restoreModalSize();
+                window.hideModal = originalHideModal;
+                originalHideModal();
+            };
         } else {
             showNotification('获取文件内容失败', 'error');
         }

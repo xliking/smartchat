@@ -209,6 +209,525 @@ async function handleKeys(request, env, corsHeaders) {
     }
 }
 __name(handleKeys, "handleKeys");
+// 本地文档解析实现（不依赖外部库）
+
+// 改进的本地 DOCX 解析（支持压缩文件）
+async function parseDocxImproved(arrayBuffer) {
+    try {
+        console.log('使用改进的本地方法解析 DOCX...');
+        
+        const zipData = new Uint8Array(arrayBuffer);
+        const view = new DataView(arrayBuffer);
+        
+        // 改进的 ZIP 解析，支持压缩文件
+        const files = await parseZipFileImproved(arrayBuffer);
+        
+        // 查找 document.xml
+        if (files['word/document.xml']) {
+            console.log('找到 word/document.xml 文件');
+            
+            const xmlData = files['word/document.xml'];
+            let xmlContent = '';
+            
+            // 尝试不同的解码方式
+            try {
+                xmlContent = new TextDecoder('utf-8').decode(xmlData);
+            } catch (e) {
+                try {
+                    xmlContent = new TextDecoder('latin1').decode(xmlData);
+                } catch (e2) {
+                    console.error('XML 解码失败');
+                    return '';
+                }
+            }
+            
+            console.log('document.xml 内容长度:', xmlContent.length);
+            
+            // 提取文本内容
+            const textMatches = xmlContent.match(/<w:t[^>]*?>(.*?)<\/w:t>/gs) || [];
+            console.log(`找到 ${textMatches.length} 个文本节点`);
+            
+            if (textMatches.length > 0) {
+                const extractedText = textMatches
+                    .map(match => {
+                        const textContent = match.replace(/<w:t[^>]*?>|<\/w:t>/g, '');
+                        return textContent
+                            .replace(/&lt;/g, '<')
+                            .replace(/&gt;/g, '>')
+                            .replace(/&amp;/g, '&')
+                            .replace(/&quot;/g, '"')
+                            .replace(/&#(\d+);/g, (match, num) => String.fromCharCode(parseInt(num)))
+                            .trim();
+                    })
+                    .filter(text => text.length > 0)
+                    .join(' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                    
+                console.log(`提取文本长度: ${extractedText.length}`);
+                if (extractedText.length > 0) {
+                    console.log('文本预览:', extractedText.substring(0, 200) + '...');
+                    return extractedText;
+                }
+            }
+        }
+        
+        return '';
+    } catch (error) {
+        console.error('改进的DOCX解析失败:', error);
+        return '';
+    }
+}
+
+// 改进的 ZIP 解析器（支持压缩文件）
+async function parseZipFileImproved(arrayBuffer) {
+    const view = new DataView(arrayBuffer);
+    const files = {};
+    
+    try {
+        // 查找中央目录结尾记录
+        let endOfCentralDir = -1;
+        for (let i = arrayBuffer.byteLength - 22; i >= 0; i--) {
+            if (view.getUint32(i, true) === 0x06054b50) {
+                endOfCentralDir = i;
+                break;
+            }
+        }
+        
+        if (endOfCentralDir === -1) {
+            console.log('无法找到 ZIP 中央目录');
+            return files;
+        }
+        
+        const totalEntries = view.getUint16(endOfCentralDir + 10, true);
+        const centralDirOffset = view.getUint32(endOfCentralDir + 16, true);
+        
+        console.log(`ZIP 文件包含 ${totalEntries} 个条目`);
+        
+        // 解析每个文件条目
+        let currentOffset = centralDirOffset;
+        for (let i = 0; i < totalEntries; i++) {
+            if (view.getUint32(currentOffset, true) !== 0x02014b50) {
+                break;
+            }
+            
+            const fileNameLength = view.getUint16(currentOffset + 28, true);
+            const localHeaderOffset = view.getUint32(currentOffset + 42, true);
+            
+            // 读取文件名
+            const fileNameBytes = new Uint8Array(arrayBuffer, currentOffset + 46, fileNameLength);
+            const fileName = new TextDecoder('utf-8').decode(fileNameBytes);
+            
+            // 解析本地文件头
+            if (view.getUint32(localHeaderOffset, true) === 0x04034b50) {
+                const compressionMethod = view.getUint16(localHeaderOffset + 8, true);
+                const compressedSize = view.getUint32(localHeaderOffset + 18, true);
+                const uncompressedSize = view.getUint32(localHeaderOffset + 22, true);
+                const localFileNameLength = view.getUint16(localHeaderOffset + 26, true);
+                const localExtraFieldLength = view.getUint16(localHeaderOffset + 28, true);
+                
+                const fileDataOffset = localHeaderOffset + 30 + localFileNameLength + localExtraFieldLength;
+                
+                if (compressionMethod === 0) {
+                    // 无压缩
+                    const fileData = new Uint8Array(arrayBuffer, fileDataOffset, compressedSize);
+                    files[fileName] = fileData;
+                    console.log(`提取文件 (无压缩): ${fileName}, 大小: ${compressedSize} 字节`);
+                } else if (compressionMethod === 8) {
+                    // Deflate 压缩
+                    const compressedData = new Uint8Array(arrayBuffer, fileDataOffset, compressedSize);
+                    try {
+                        const decompressedData = await inflateRaw(compressedData);
+                        files[fileName] = decompressedData;
+                        console.log(`提取文件 (压缩): ${fileName}, 压缩: ${compressedSize} → 解压: ${decompressedData.length} 字节`);
+                    } catch (inflateError) {
+                        console.log(`解压失败: ${fileName}, 错误: ${inflateError.message}`);
+                    }
+                }
+            }
+            
+            // 移动到下一个条目
+            const extraFieldLength = view.getUint16(currentOffset + 30, true);
+            const commentLength = view.getUint16(currentOffset + 32, true);
+            currentOffset += 46 + fileNameLength + extraFieldLength + commentLength;
+        }
+        
+    } catch (error) {
+        console.error('ZIP 解析错误:', error);
+    }
+    
+    return files;
+}
+
+// 使用 Cloudflare Workers 原生 API 进行 Deflate 解压
+async function inflateRaw(compressedData) {
+    try {
+        // 尝试使用 DecompressionStream API
+        if (typeof DecompressionStream !== 'undefined') {
+            console.log('使用 DecompressionStream 解压...');
+            
+            const stream = new DecompressionStream('deflate-raw');
+            const writer = stream.writable.getWriter();
+            const reader = stream.readable.getReader();
+            
+            // 写入压缩数据
+            await writer.write(compressedData);
+            await writer.close();
+            
+            // 读取解压数据
+            const chunks = [];
+            let done = false;
+            
+            while (!done) {
+                const { value, done: readerDone } = await reader.read();
+                done = readerDone;
+                if (value) {
+                    chunks.push(value);
+                }
+            }
+            
+            // 合并所有chunks
+            const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+            const result = new Uint8Array(totalLength);
+            let offset = 0;
+            
+            for (const chunk of chunks) {
+                result.set(chunk, offset);
+                offset += chunk.length;
+            }
+            
+            console.log(`解压成功: ${compressedData.length} → ${result.length} 字节`);
+            return result;
+        }
+        
+        // 如果 DecompressionStream 不可用，尝试备用方法
+        throw new Error('DecompressionStream 不可用');
+        
+    } catch (error) {
+        console.log('原生解压失败，尝试备用方法:', error.message);
+        
+        // 备用方法：尝试直接解码（适用于某些情况）
+        try {
+            const decoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: false });
+            const decoded = decoder.decode(compressedData);
+            
+            // 检查是否包含有效的 XML 内容
+            if (decoded.includes('<w:t>') || decoded.includes('<?xml') || decoded.includes('<w:')) {
+                console.log('备用解码成功，找到 XML 内容');
+                return new TextEncoder().encode(decoded);
+            }
+            
+            throw new Error('没有找到有效的 XML 内容');
+        } catch (decodeError) {
+            throw new Error('所有解压方法都失败了: ' + decodeError.message);
+        }
+    }
+}
+
+// 文档解析函数
+async function parseDocument(arrayBuffer, fileName) {
+    const fileExtension = fileName.toLowerCase().split('.').pop();
+    
+    try {
+        switch (fileExtension) {
+            case 'txt':
+            case 'md':
+                // 直接读取纯文本文件
+                const textDecoder = new TextDecoder('utf-8');
+                return textDecoder.decode(arrayBuffer);
+                
+            case 'docx':
+                // 使用改进的本地解析器
+                const docxResult = await parseDocxImproved(arrayBuffer);
+                if (docxResult && docxResult.length > 50) {
+                    return docxResult;
+                }
+                // 备用方法
+                return await parseDocx(arrayBuffer);
+                
+            case 'pdf':
+                // 使用基础的 PDF 解析
+                return await parsePdf(arrayBuffer);
+                
+            default:
+                console.log(`不支持的文件格式: ${fileExtension}`);
+                return '';
+        }
+    } catch (error) {
+        console.error(`文档解析错误 (${fileName}):`, error);
+        return '';
+    }
+}
+
+// 简单的 ZIP 文件解析器
+function parseZipFile(arrayBuffer) {
+    const view = new DataView(arrayBuffer);
+    const files = {};
+    
+    try {
+        // 查找 ZIP 文件的中央目录结尾记录
+        let offset = arrayBuffer.byteLength - 22;
+        let endOfCentralDir = -1;
+        
+        // 向前搜索中央目录结尾签名 (0x06054b50)
+        for (let i = offset; i >= 0; i--) {
+            if (view.getUint32(i, true) === 0x06054b50) {
+                endOfCentralDir = i;
+                break;
+            }
+        }
+        
+        if (endOfCentralDir === -1) {
+            console.log('无法找到 ZIP 中央目录');
+            return files;
+        }
+        
+        // 读取中央目录信息
+        const totalEntries = view.getUint16(endOfCentralDir + 10, true);
+        const centralDirOffset = view.getUint32(endOfCentralDir + 16, true);
+        
+        console.log(`ZIP 文件包含 ${totalEntries} 个条目`);
+        
+        // 解析中央目录中的每个文件条目
+        let currentOffset = centralDirOffset;
+        for (let i = 0; i < totalEntries; i++) {
+            if (view.getUint32(currentOffset, true) !== 0x02014b50) {
+                break; // 不是有效的中央目录文件头签名
+            }
+            
+            const fileNameLength = view.getUint16(currentOffset + 28, true);
+            const extraFieldLength = view.getUint16(currentOffset + 30, true);
+            const commentLength = view.getUint16(currentOffset + 32, true);
+            const localHeaderOffset = view.getUint32(currentOffset + 42, true);
+            
+            // 读取文件名
+            const fileNameBytes = new Uint8Array(arrayBuffer, currentOffset + 46, fileNameLength);
+            const fileName = new TextDecoder('utf-8').decode(fileNameBytes);
+            
+            // 解析本地文件头获取文件内容
+            if (view.getUint32(localHeaderOffset, true) === 0x04034b50) {
+                const localFileNameLength = view.getUint16(localHeaderOffset + 26, true);
+                const localExtraFieldLength = view.getUint16(localHeaderOffset + 28, true);
+                const compressedSize = view.getUint32(localHeaderOffset + 18, true);
+                const compressionMethod = view.getUint16(localHeaderOffset + 8, true);
+                
+                const fileDataOffset = localHeaderOffset + 30 + localFileNameLength + localExtraFieldLength;
+                
+                if (compressionMethod === 0) { // 无压缩
+                    const fileData = new Uint8Array(arrayBuffer, fileDataOffset, compressedSize);
+                    files[fileName] = fileData;
+                    console.log(`提取文件: ${fileName}, 大小: ${compressedSize} 字节`);
+                }
+            }
+            
+            currentOffset += 46 + fileNameLength + extraFieldLength + commentLength;
+        }
+        
+    } catch (error) {
+        console.error('ZIP 解析错误:', error);
+    }
+    
+    return files;
+}
+
+// 解析 DOCX 文件
+async function parseDocx(arrayBuffer) {
+    try {
+        console.log('开始解析 DOCX 文件...');
+        
+        // 首先尝试解析为 ZIP 文件
+        const zipFiles = parseZipFile(arrayBuffer);
+        
+        // 查找 document.xml 文件
+        if (zipFiles['word/document.xml']) {
+            console.log('找到 word/document.xml 文件');
+            const documentXml = new TextDecoder('utf-8').decode(zipFiles['word/document.xml']);
+            
+            // 从 document.xml 中提取文本
+            const textMatches = documentXml.match(/<w:t[^>]*?>(.*?)<\/w:t>/gs) || [];
+            console.log(`找到 ${textMatches.length} 个文本节点`);
+            
+            if (textMatches.length > 0) {
+                const extractedText = textMatches
+                    .map(match => {
+                        const textContent = match.replace(/<w:t[^>]*?>|<\/w:t>/g, '');
+                        return textContent
+                            .replace(/&lt;/g, '<')
+                            .replace(/&gt;/g, '>')
+                            .replace(/&amp;/g, '&')
+                            .replace(/&quot;/g, '"')
+                            .trim();
+                    })
+                    .filter(text => text.length > 0)
+                    .join(' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                    
+                console.log(`从 document.xml 提取文本长度: ${extractedText.length}`);
+                if (extractedText.length > 0) {
+                    console.log('文本预览:', extractedText.substring(0, 200) + '...');
+                    return extractedText;
+                }
+            }
+        }
+        
+        // 如果 ZIP 解析失败，回退到原始方法
+        console.log('ZIP 解析失败，使用备用方法...');
+        const zipData = new Uint8Array(arrayBuffer);
+        const text = await extractTextFromDocx(zipData);
+        return text;
+    } catch (error) {
+        console.error('DOCX 解析错误:', error);
+        return '';
+    }
+}
+
+// 改进的 DOCX 文本提取
+async function extractTextFromDocx(zipData) {
+    try {
+        // 使用多种编码尝试解析
+        let content = '';
+        
+        // 尝试不同的解码方式
+        try {
+            // 首先尝试 UTF-8
+            const utf8Decoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
+            content = utf8Decoder.decode(zipData);
+        } catch (e) {
+            try {
+                // 如果 UTF-8 失败，尝试 Latin1
+                const latin1Decoder = new TextDecoder('latin1');
+                content = latin1Decoder.decode(zipData);
+            } catch (e2) {
+                // 最后尝试 Windows-1252
+                const cp1252Decoder = new TextDecoder('windows-1252');
+                content = cp1252Decoder.decode(zipData);
+            }
+        }
+        
+        console.log('DOCX 解码后内容长度:', content.length);
+        
+        // 方法1: 查找 <w:t> 标签中的文本内容（最准确的方法）
+        const wtMatches = content.match(/<w:t[^>]*?>(.*?)<\/w:t>/gs);
+        if (wtMatches && wtMatches.length > 0) {
+            console.log('找到 w:t 标签数量:', wtMatches.length);
+            const extractedText = wtMatches
+                .map(match => {
+                    // 提取标签内的文本内容
+                    const textContent = match.replace(/<w:t[^>]*?>|<\/w:t>/g, '');
+                    // 解码HTML实体
+                    return textContent
+                        .replace(/&lt;/g, '<')
+                        .replace(/&gt;/g, '>')
+                        .replace(/&amp;/g, '&')
+                        .replace(/&quot;/g, '"')
+                        .replace(/&#(\d+);/g, (match, num) => String.fromCharCode(parseInt(num)))
+                        .trim();
+                })
+                .filter(text => text.length > 0)
+                .join(' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+                
+            if (extractedText.length > 100) {
+                console.log('w:t 标签提取成功，文本长度:', extractedText.length);
+                console.log('文本预览:', extractedText.substring(0, 200) + '...');
+                return extractedText.substring(0, 50000);
+            }
+        }
+        
+        // 方法2: 查找所有可能的中文和英文字符串
+        console.log('尝试方法2: 查找字符串模式');
+        const textPatterns = [
+            // 查找被引号包围的文本
+            /"([^"]{2,}[^"\x00-\x1F]+)"/g,
+            // 查找中文字符串
+            /[\u4e00-\u9fff][\u4e00-\u9fff\s\w\.,，。！？；：""''（）]{5,}/g,
+            // 查找英文单词组合
+            /[A-Za-z][\w\s\.,!?;:'"()-]{10,}[A-Za-z]/g
+        ];
+        
+        const allTextMatches = [];
+        textPatterns.forEach(pattern => {
+            const matches = content.match(pattern) || [];
+            allTextMatches.push(...matches);
+        });
+        
+        if (allTextMatches.length > 0) {
+            const extractedText = allTextMatches
+                .map(match => match.replace(/["\x00-\x1F\x7F-\x9F]/g, '').trim())
+                .filter(text => text.length > 5)
+                .join(' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+                
+            if (extractedText.length > 100) {
+                console.log('模式匹配提取成功，文本长度:', extractedText.length);
+                console.log('文本预览:', extractedText.substring(0, 200) + '...');
+                return extractedText.substring(0, 50000);
+            }
+        }
+        
+        // 方法3: 暴力提取所有可读字符
+        console.log('尝试方法3: 暴力字符提取');
+        const cleanText = content
+            .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F]/g, ' ') // 移除控制字符但保留换行
+            .replace(/[^\u0020-\u007E\u4e00-\u9fff\s]/g, ' ') // 保留ASCII、中文和空白字符
+            .replace(/\s+/g, ' ')
+            .split(' ')
+            .filter(word => word.length > 1) // 过滤单字符
+            .join(' ')
+            .trim();
+            
+        console.log('暴力提取文本长度:', cleanText.length);
+        if (cleanText.length > 0) {
+            console.log('文本预览:', cleanText.substring(0, 200) + '...');
+        }
+        
+        return cleanText.substring(0, 50000);
+    } catch (error) {
+        console.error('DOCX 文本提取错误:', error);
+        return '';
+    }
+}
+
+// 解析 PDF 文件（基础实现）
+async function parsePdf(arrayBuffer) {
+    try {
+        // PDF 解析比较复杂，这里实现一个基础的文本提取
+        const pdfData = new Uint8Array(arrayBuffer);
+        const decoder = new TextDecoder('latin1');
+        const content = decoder.decode(pdfData);
+        
+        // 查找 PDF 中的文本流
+        const textStreams = [];
+        const streamRegex = /stream\s*(.*?)\s*endstream/gs;
+        let match;
+        
+        while ((match = streamRegex.exec(content)) !== null) {
+            const streamContent = match[1];
+            // 尝试提取可读文本
+            const textMatch = streamContent.match(/\((.*?)\)/g);
+            if (textMatch) {
+                textMatch.forEach(text => {
+                    const cleanText = text.replace(/[()]/g, '').trim();
+                    if (cleanText.length > 2) {
+                        textStreams.push(cleanText);
+                    }
+                });
+            }
+        }
+        
+        const extractedText = textStreams.join(' ').replace(/\s+/g, ' ').trim();
+        console.log('PDF 文本提取长度:', extractedText.length);
+        
+        return extractedText.substring(0, 50000); // 限制最大长度
+    } catch (error) {
+        console.error('PDF 解析错误:', error);
+        return '';
+    }
+}
+
 async function handleUpload(request, env, corsHeaders) {
     const headers = { ...corsHeaders, "Content-Type": "application/json" };
     if (!await verifyAdmin(request, env)) {
@@ -232,18 +751,40 @@ async function handleUpload(request, env, corsHeaders) {
         fileName = file.name;
         fileType = "file";
         content = await file.arrayBuffer();
+        
+        console.log(`📄 开始解析文件: ${fileName}, 大小: ${content.byteLength} 字节`);
+        
+        // 解析文档内容
+        const textContent = await parseDocument(content, fileName);
+        console.log(`📝 文档解析完成: ${fileName}, 提取文本长度: ${textContent.length} 字符`);
+        
+        if (textContent.length === 0) {
+            return new Response(JSON.stringify({ 
+                error: `文件解析失败：无法从 ${fileName} 中提取文本内容，请确保文件格式正确且包含文本内容` 
+            }), {
+                status: 400,
+                headers
+            });
+        }
+        
+        // 临时存储提取的文本内容供后续使用
+        content.extractedText = textContent;
+        
         await env.AI_R2.put(`files/${fileId}`, content);
     } else {
         const { text } = await request.json();
         fileName = `text_${fileId}.txt`;
         fileType = "text";
         content = text;
+        // 为文本类型也添加 extractedText 属性以保持一致性
+        content.extractedText = text;
         await env.AI_R2.put(`files/${fileId}`, content);
     }
-    const embedding = await getEmbedding(
-        fileType === "text" ? content : fileName,
-        env
-    );
+    // 基于提取的文本内容生成 embedding
+    const textForEmbedding = fileType === "text" ? content : content.extractedText;
+    console.log(`🔮 开始生成 embedding: ${fileName}, 文本长度: ${textForEmbedding.length}`);
+    const embedding = await getEmbedding(textForEmbedding, env);
+    console.log(`✅ Embedding 生成完成: ${fileName}, 维度: ${embedding.length}`);
     await env.AI_DB.prepare(`
     INSERT INTO files (id, name, type, content, embedding, created_at)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -251,13 +792,14 @@ async function handleUpload(request, env, corsHeaders) {
         fileId,
         fileName,
         fileType,
-        fileType === "text" ? content : "",
+        textForEmbedding, // 存储提取的文本内容
         JSON.stringify(embedding),
         (/* @__PURE__ */ new Date()).toISOString()
     ).run();
     return new Response(JSON.stringify({
         success: true,
-        fileId
+        fileId,
+        extractedTextLength: textForEmbedding.length
     }), { headers });
 }
 __name(handleUpload, "handleUpload");
@@ -275,7 +817,11 @@ async function handleFiles(request, env, corsHeaders) {
     const offset = (page - 1) * limit;
     const totalQuery = await env.AI_DB.prepare(`SELECT COUNT(*) as total FROM files`).first();
     const result = await env.AI_DB.prepare(`
-    SELECT id, name, type, created_at as created
+    SELECT id, name, type, created_at as created,
+           CASE 
+             WHEN type = 'text' AND content IS NOT NULL THEN LENGTH(content)
+             ELSE NULL
+           END as content_length
     FROM files
     ORDER BY created_at DESC
     LIMIT ? OFFSET ?
@@ -380,7 +926,7 @@ async function handleStatistics(request, env, corsHeaders) {
             // 获取R2文件存储大小
             let fileStorageSize = 0;
             try {
-                const r2Objects = await env.AI_FILES.list();
+                const r2Objects = await env.AI_R2.list();
                 fileStorageSize = r2Objects.objects.reduce((total, obj) => total + (obj.size || 0), 0);
             } catch (e) {
                 console.log("Unable to get R2 storage size:", e.message);
@@ -576,7 +1122,7 @@ async function handleDeleteFile(request, env, corsHeaders) {
     }
     try {
         const fileResult = await env.AI_DB.prepare(`
-      SELECT name, r2_key FROM files WHERE id = ?
+      SELECT name, type FROM files WHERE id = ?
     `).bind(fileId).first();
         if (!fileResult) {
             return new Response(JSON.stringify({ error: "\u6587\u4EF6\u4E0D\u5B58\u5728" }), {
@@ -584,8 +1130,12 @@ async function handleDeleteFile(request, env, corsHeaders) {
                 headers
             });
         }
-        if (fileResult.r2_key) {
-            await env.AI_R2.delete(fileResult.r2_key);
+        // 删除 R2 中的文件（使用 fileId 作为 key）
+        try {
+            await env.AI_R2.delete(`files/${fileId}`);
+            console.log(`✅ 已删除 R2 文件: files/${fileId}`);
+        } catch (r2Error) {
+            console.log(`⚠️ 删除 R2 文件失败: ${r2Error.message}`);
         }
         const deleteResult = await env.AI_DB.prepare(`
       DELETE FROM files WHERE id = ?
@@ -627,7 +1177,7 @@ async function handleGetFile(request, env, corsHeaders) {
     }
     try {
         const fileResult = await env.AI_DB.prepare(`
-      SELECT id, name, type, content, r2_key, created_at FROM files WHERE id = ?
+      SELECT id, name, type, content, created_at FROM files WHERE id = ?
     `).bind(fileId).first();
         if (!fileResult) {
             return new Response(JSON.stringify({ error: "\u6587\u4EF6\u4E0D\u5B58\u5728" }), {
@@ -635,9 +1185,9 @@ async function handleGetFile(request, env, corsHeaders) {
                 headers
             });
         }
-        if (fileResult.type === "file" && fileResult.r2_key) {
+        if (fileResult.type === "file" && (!fileResult.content || fileResult.content.trim() === '')) {
             try {
-                const r2Object = await env.AI_R2.get(fileResult.r2_key);
+                const r2Object = await env.AI_R2.get(`files/${fileResult.id}`);
                 if (r2Object) {
                     const content = await r2Object.text();
                     fileResult.content = content;
@@ -1025,7 +1575,7 @@ async function performRAG(query, env) {
         console.log("✅ 查询embedding生成成功, 维度:", queryEmbedding.length);
         
         const files = await env.AI_DB.prepare(`
-      SELECT id, name, content, embedding
+      SELECT id, name, type, content, embedding
       FROM files
       ORDER BY created_at DESC
       LIMIT 50
@@ -1046,6 +1596,25 @@ async function performRAG(query, env) {
         
         console.log("🔝 最高相似度:", similarities[0]?.similarity?.toFixed(4));
         
+        // 辅助函数：获取文档的完整内容
+        const getDocumentContent = async (doc) => {
+            if (doc.type === 'file' && (!doc.content || doc.content.trim() === '')) {
+                // 对于文件类型，从R2获取内容
+                try {
+                    const r2Object = await env.AI_R2.get(`files/${doc.id}`);
+                    if (r2Object) {
+                        const content = await r2Object.text();
+                        console.log(`📥 从R2获取文件内容: ${doc.name}, 长度: ${content.length}字符`);
+                        return content;
+                    }
+                } catch (error) {
+                    console.log(`❌ 无法从R2获取文件内容: ${doc.name}, 错误: ${error.message}`);
+                    return '';
+                }
+            }
+            return doc.content || '';
+        };
+
         const topDocs = similarities.slice(0, 3).filter((doc) => doc.similarity > 0.7);
         console.log("✨ 筛选后文档数量 (阈值0.7):", topDocs.length);
         
@@ -1057,20 +1626,37 @@ async function performRAG(query, env) {
             if (!lowThresholdDocs.length) {
                 return null;
             }
+            
+            // 获取文档内容
+            const docsWithContent = await Promise.all(
+                lowThresholdDocs.map(async (doc) => ({
+                    ...doc,
+                    content: await getDocumentContent(doc)
+                }))
+            );
+            
             console.log("📄 低阈值文档内容预览:");
-            lowThresholdDocs.forEach((doc, i) => {
+            docsWithContent.forEach((doc, i) => {
                 console.log(`  ${i+1}. ${doc.name}: "${doc.content.substring(0, 100)}${doc.content.length > 100 ? '...' : ''}" (${doc.content.length}字符)`);
             });
-            const rerankedDocs = await rerank(query, lowThresholdDocs.map((doc) => doc.content), env);
+            const rerankedDocs = await rerank(query, docsWithContent.map((doc) => doc.content), env);
             console.log("🎯 RAG检索完成, 返回内容长度:", rerankedDocs.slice(0, 2).join("\n\n").length);
             return rerankedDocs.slice(0, 2).join("\n\n");
         }
         
+        // 获取高阈值文档的内容
+        const topDocsWithContent = await Promise.all(
+            topDocs.map(async (doc) => ({
+                ...doc,
+                content: await getDocumentContent(doc)
+            }))
+        );
+        
         console.log("📄 高阈值文档内容预览:");
-        topDocs.forEach((doc, i) => {
+        topDocsWithContent.forEach((doc, i) => {
             console.log(`  ${i+1}. ${doc.name}: "${doc.content.substring(0, 100)}${doc.content.length > 100 ? '...' : ''}" (${doc.content.length}字符)`);
         });
-        const rerankedDocs = await rerank(query, topDocs.map((doc) => doc.content), env);
+        const rerankedDocs = await rerank(query, topDocsWithContent.map((doc) => doc.content), env);
         console.log("🎯 RAG检索完成, 返回内容长度:", rerankedDocs.slice(0, 2).join("\n\n").length);
         return rerankedDocs.slice(0, 2).join("\n\n");
     } catch (error) {

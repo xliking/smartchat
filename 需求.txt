@@ -7,13 +7,8 @@
 （5） 对外返回的方式 可以是 规定的，可以正常请求的 stream:true 开启流式响应，false 就是正常json响应
 （6） 可以对特定词语 开启 绘画 功能，如果 用户的的语句中包含，画，画字开头的，就会触发绘画功能，这个也是可以在页面配置
 （7） 用户对话需要隔离和保存，可以根据APIkey来区分隔离不同的人
-（8） 可以在页面中设置 最大对话数，设置了20条，如果messages中有21条，那么就去掉除了system角色之外的一条对话记录
 （9） 可以在页面中设置 对外的model,这个model的名字，我可以自己随便定义，并给可以给对外的model设置不同的 system 提示词
 （10） 你要充分理解我的 对外和对内，对内就是我设置到的现成，真实可用的 BaseUrl 和 ApiKey，Model 等那些东西
                                  对外就是 我设置的workers 的请求路径 + /v1/chat/completions 当做 BaseUrl,ApiKey 就是我可以自定义的sk,model 就是第 9 步骤自定义的model
                                  其实 workers 的作用就是 充当 中转，内部 实现了 RAG，重排序，绘画，对话 等等，再把生成的结果按照要求返回给我
 （11） workers 的页面需要好看，简约大气，一定要好看美观，功能要完整！！！
-
-
-你说我现在保存历史对话有作用吗？因为每次客户端对话都会携带对话历史记录的。并且我需要像 别的API一样，请求 /v1/models,Authorization: Bearer your-api-key                                                                         │
-Content-Type: application/json ,也会返回对应的模型json
