@@ -102,6 +102,12 @@ async function handleRequest(request, env) {
         if (path === "/api/fetch-models") {
             return handleFetchModels(request, env, corsHeaders);
         }
+        if (path === "/api/test-db-insert") {
+            return handleTestDbInsert(request, env, corsHeaders);
+        }
+        if (path === "/api/check-api-usage") {
+            return handleCheckApiUsage(request, env, corsHeaders);
+        }
         if (path === "/api/ai-config") {
             return handleAiConfig(request, env, corsHeaders);
         }
@@ -161,7 +167,6 @@ async function handleSetup(request, env, corsHeaders) {
             created: (/* @__PURE__ */ new Date()).toISOString(),
             active: true
         }]));
-        await initializeDatabase(env);
         return new Response(JSON.stringify({
             success: true,
             token: adminToken,
@@ -1307,6 +1312,8 @@ async function handleV1Models(request, env, corsHeaders) {
 __name(handleV1Models, "handleV1Models");
 async function handleChatCompletions(request, env, corsHeaders) {
     const headers = { ...corsHeaders, "Content-Type": "application/json" };
+    const requestStartTime = new Date().toISOString();
+    
     if (request.method !== "POST") {
         return new Response("Method not allowed", { status: 405, headers });
     }
@@ -1317,8 +1324,20 @@ async function handleChatCompletions(request, env, corsHeaders) {
             headers
         });
     }
+    
+    // 直接在这里插入API使用记录
     const requestData = await request.json();
     const { messages, stream = false, model: requestModel } = requestData;
+    
+    try {
+        await env.AI_DB.prepare(`
+            INSERT INTO api_usage (api_key, model, request_time, input_tokens, output_tokens, status, error_message)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).bind(apiKey, requestModel || 'unknown', requestStartTime, 0, 0, 'started', null).run();
+        console.log('📊 API usage record inserted at start');
+    } catch (error) {
+        console.error('❌ Failed to insert API usage record:', error);
+    }
     const systemConfigData = await env.AI_KV.get("SYSTEM_CONFIG");
     const systemConfig = systemConfigData ? JSON.parse(systemConfigData) : {};
     const maxMessages = systemConfig.maxMessages || 20;
@@ -1516,10 +1535,21 @@ ${ragContext}`
                         }
                     }
                     
-                } catch (error) {
-                    console.error("Stream processing error:", error);
+                } catch (streamError) {
+                    console.error("Stream processing error:", streamError);
+                    
+                    // Record API usage for failed streaming request
+                    const estimatedInputTokens = Math.ceil(limitedMessages.reduce((sum, msg) => sum + (msg.content?.length || 0), 0) / 4);
+                    await recordApiUsage(env, apiKey, requestModel, requestStartTime, estimatedInputTokens, 0, 'error', streamError.message);
                 } finally {
                     await writer.close();
+                    
+                    // Record API usage for streaming request (estimated tokens) - only if no error occurred
+                    if (!streamError) {
+                        const estimatedInputTokens = Math.ceil(limitedMessages.reduce((sum, msg) => sum + (msg.content?.length || 0), 0) / 4);
+                        const estimatedOutputTokens = Math.ceil(fullContent.length / 4);
+                        await recordApiUsage(env, apiKey, requestModel, requestStartTime, estimatedInputTokens, estimatedOutputTokens, 'success');
+                    }
                 }
             })();
             
@@ -1534,6 +1564,11 @@ ${ragContext}`
         } else {
             const result = await aiResponse.json();
             
+            // Record API usage for successful request
+            const inputTokens = result.usage?.prompt_tokens || 0;
+            const outputTokens = result.usage?.completion_tokens || 0;
+            await recordApiUsage(env, apiKey, requestModel, requestStartTime, inputTokens, outputTokens, 'success');
+            
             // Check Notion workflow triggers after AI response for non-streaming
             if (result.choices && result.choices[0] && result.choices[0].message) {
                 const aiContent = result.choices[0].message.content;
@@ -1545,6 +1580,9 @@ ${ragContext}`
         }
     } catch (error) {
         console.error("AI service error:", error);
+        
+        // Record API usage for failed request
+        await recordApiUsage(env, apiKey, requestModel, requestStartTime, 0, 0, 'error', error.message);
         
         // If this is a streaming request and we get an error, return a stream with error
         if (stream) {
@@ -1797,19 +1835,20 @@ async function saveConversation(apiKey, messages, env) {
     }
 }
 __name(saveConversation, "saveConversation");
-async function initializeDatabase(env) {
-    await env.AI_DB.prepare(`
-    CREATE TABLE IF NOT EXISTS files (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      type TEXT NOT NULL,
-      content TEXT,
-      embedding TEXT,
-      created_at TEXT NOT NULL
-    )
-  `).run();
+
+async function recordApiUsage(env, apiKey, model, requestTime, inputTokens = 0, outputTokens = 0, status = 'success', errorMessage = null) {
+    try {
+        console.log('📊 Recording API usage:', { apiKey: apiKey.substring(0, 10) + '...', model, inputTokens, outputTokens, status });
+        await env.AI_DB.prepare(`
+            INSERT INTO api_usage (api_key, model, request_time, input_tokens, output_tokens, status, error_message)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).bind(apiKey, model, requestTime, inputTokens, outputTokens, status, errorMessage).run();
+        console.log('✅ API usage recorded successfully');
+    } catch (error) {
+        console.error('❌ Failed to record API usage:', error);
+        console.error('Error details:', error.message, error.stack);
+    }
 }
-__name(initializeDatabase, "initializeDatabase");
 function generateToken() {
     return nanoid(32);
 }
@@ -2950,6 +2989,77 @@ async function scheduled(event, env, ctx) {
         
     } catch (error) {
         console.error("Auto-sync error:", error);
+    }
+}
+
+// Check API usage function
+async function handleCheckApiUsage(request, env, corsHeaders) {
+    const headers = { ...corsHeaders, "Content-Type": "application/json" };
+    
+    try {
+        console.log('🔍 Checking API usage records');
+        
+        const result = await env.AI_DB.prepare(`
+            SELECT * FROM api_usage 
+            ORDER BY created_at DESC 
+            LIMIT 10
+        `).all();
+        
+        return new Response(JSON.stringify({ 
+            success: true, 
+            count: result.results.length,
+            records: result.results 
+        }), {
+            status: 200,
+            headers
+        });
+    } catch (error) {
+        console.error('❌ Failed to check API usage:', error);
+        return new Response(JSON.stringify({ 
+            error: 'Failed to check API usage', 
+            details: error.message 
+        }), {
+            status: 500,
+            headers
+        });
+    }
+}
+
+// Test function for API usage tracking
+async function handleTestDbInsert(request, env, corsHeaders) {
+    const headers = { ...corsHeaders, "Content-Type": "application/json" };
+    
+    try {
+        console.log('🧪 Testing database insert for API usage tracking');
+        
+        // Test the recordApiUsage function directly
+        await recordApiUsage(
+            env, 
+            'sk-test-key-123', 
+            'test-model', 
+            new Date().toISOString(), 
+            10, 
+            20, 
+            'success', 
+            null
+        );
+        
+        return new Response(JSON.stringify({ 
+            success: true, 
+            message: 'Database insert test completed successfully' 
+        }), {
+            status: 200,
+            headers
+        });
+    } catch (error) {
+        console.error('❌ Database insert test failed:', error);
+        return new Response(JSON.stringify({ 
+            error: 'Database insert test failed', 
+            details: error.message 
+        }), {
+            status: 500,
+            headers
+        });
     }
 }
 
