@@ -467,6 +467,25 @@ async function inflateRaw(compressedData) {
     }
 }
 
+// 计算文件内容哈希值
+async function calculateFileHash(content) {
+    if (content instanceof ArrayBuffer) {
+        // 对于二进制内容（文件）
+        const buffer = new Uint8Array(content);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    } else if (typeof content === 'string') {
+        // 对于文本内容
+        const encoder = new TextEncoder();
+        const data = encoder.encode(content);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+    return null;
+}
+
 // 文档解析函数
 async function parseDocument(arrayBuffer, fileName) {
     const fileExtension = fileName.toLowerCase().split('.').pop();
@@ -811,38 +830,97 @@ async function handleUpload(request, env, corsHeaders) {
         }
         
         // 临时存储提取的文本内容供后续使用
-        content.extractedText = textContent;
+        const contentWithExtractedText = {
+            arrayBuffer: content,
+            extractedText: textContent
+        };
+        content = contentWithExtractedText;
         
-        await env.AI_R2.put(`files/${fileId}`, content);
+        await env.AI_R2.put(`files/${fileId}`, content.arrayBuffer);
     } else {
         const { text } = await request.json();
         fileName = `text_${fileId}.txt`;
         fileType = "text";
         content = text;
-        // 为文本类型也添加 extractedText 属性以保持一致性
-        content.extractedText = text;
-        await env.AI_R2.put(`files/${fileId}`, content);
+        // 保存原始文本到R2用于哈希计算
+        const textBuffer = new TextEncoder().encode(text);
+        await env.AI_R2.put(`files/${fileId}`, textBuffer);
+        // 保存ArrayBuffer引用用于哈希计算
+        const textContentWithBuffer = {
+            text: text,
+            arrayBuffer: textBuffer.buffer,
+            extractedText: text
+        };
+        content = textContentWithBuffer;
     }
     // 基于提取的文本内容生成 embedding
-    const textForEmbedding = fileType === "text" ? content : content.extractedText;
+    const textForEmbedding = fileType === "text" ? content.text : content.extractedText;
     console.log(`🔮 开始生成 embedding: ${fileName}, 文本长度: ${textForEmbedding.length}`);
     const embedding = await getEmbedding(textForEmbedding, env);
     console.log(`✅ Embedding 生成完成: ${fileName}, 维度: ${embedding.length}`);
-    await env.AI_DB.prepare(`
-    INSERT INTO files (id, name, type, content, embedding, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).bind(
-        fileId,
-        fileName,
-        fileType,
-        textForEmbedding, // 存储提取的文本内容
-        JSON.stringify(embedding),
-        (/* @__PURE__ */ new Date()).toISOString()
-    ).run();
+    
+    // 计算文件哈希值用于重复检查
+    const fileContentForHash = fileType === "text" ? content.arrayBuffer : content.arrayBuffer;
+    const fileHash = await calculateFileHash(fileContentForHash);
+    console.log(`🔍 文件哈希计算完成: ${fileName}, 哈希值: ${fileHash?.substring(0, 16)}...`);
+    
+    // 检查是否已存在相同内容的文件（不限制类型，因为内容相同应该去重）
+    const existingFile = await env.AI_DB.prepare(`
+        SELECT id, name, type, created_at FROM files 
+        WHERE file_hash = ?
+        LIMIT 1
+    `).bind(fileHash).first();
+    
+    if (existingFile) {
+        console.log(`📄 发现重复文件: ${fileName} 与 ${existingFile.name} 内容相同，将更新现有记录`);
+        
+        // 更新现有记录
+        await env.AI_DB.prepare(`
+            UPDATE files 
+            SET name = ?, content = ?, embedding = ?, file_hash = ?, created_at = ?
+            WHERE id = ?
+        `).bind(
+            fileName,
+            textForEmbedding,
+            JSON.stringify(embedding),
+            fileHash,
+            new Date().toISOString(),
+            existingFile.id
+        ).run();
+        
+        // 删除旧的R2文件（如果是文件类型）
+        if (fileType === "file") {
+            await env.AI_R2.delete(`files/${existingFile.id}`);
+            await env.AI_R2.put(`files/${existingFile.id}`, content.arrayBuffer);
+        } else {
+            // 对于文本类型，保存到R2
+            await env.AI_R2.put(`files/${existingFile.id}`, content.arrayBuffer);
+        }
+        
+        fileId = existingFile.id; // 使用现有的文件ID
+    } else {
+        console.log(`📄 新文件上传: ${fileName}`);
+        
+        // 插入新记录
+        await env.AI_DB.prepare(`
+            INSERT INTO files (id, name, type, content, embedding, file_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+            fileId,
+            fileName,
+            fileType,
+            textForEmbedding,
+            JSON.stringify(embedding),
+            fileHash,
+            new Date().toISOString()
+        ).run();
+    }
     return new Response(JSON.stringify({
         success: true,
         fileId,
-        extractedTextLength: textForEmbedding.length
+        extractedTextLength: textForEmbedding.length,
+        action: existingFile ? 'updated' : 'created',
+        message: existingFile ? `文件已更新（覆盖了同名文件: ${existingFile.name}）` : '文件上传成功'
     }), { headers });
 }
 __name(handleUpload, "handleUpload");
@@ -1939,6 +2017,12 @@ async function handleNotion(request, env, corsHeaders, path) {
                 return handleGetSyncSettings(request, env, headers);
             case "get-workflow-settings":
                 return handleGetWorkflowSettings(request, env, headers);
+            case "sync-page":
+                return handleNotionSyncPage(request, env, headers);
+            case "sync-database":
+                return handleNotionSyncDatabase(request, env, headers);
+            case "check-page-synced":
+                return handleCheckPageSynced(request, env, headers);
             default:
                 return new Response(JSON.stringify({ error: "Notion API endpoint not found" }), {
                     status: 404,
@@ -2246,22 +2330,47 @@ async function handleNotionSyncAll(request, env, headers) {
                             console.error('Failed to generate embedding:', embeddingError);
                         }
 
-                        // Store in files table for RAG
-                        const fileId = crypto.randomUUID();
+                        // 计算页面内容的哈希值
+                        const pageHash = await calculateFileHash(content);
+                        
+                        // 检查是否已存在相同内容的页面（基于内容哈希）
+                        const existingFile = await env.AI_DB.prepare(`
+                            SELECT id, name, created_at FROM files 
+                            WHERE file_hash = ?
+                            LIMIT 1
+                        `).bind(pageHash).first();
+                        
+                        const fileName = `Notion: [${page.id}] ${page.title}`;
+                        const fileId = existingFile ? existingFile.id : crypto.randomUUID();
                         const now = new Date().toISOString();
 
-                        await env.AI_DB.prepare(`
-                            INSERT OR REPLACE INTO files 
-                            (id, name, type, content, embedding, created_at) 
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        `).bind(
-                            fileId,
-                            `Notion: ${page.title}`,
-                            'text',
-                            content,
-                            embedding,
-                            now
-                        ).run();
+                        if (existingFile) {
+                            console.log(`📄 Notion页面内容重复: ${fileName} 与 ${existingFile.name} 内容相同，将更新现有记录`);
+                            
+                            // 更新现有记录
+                            await env.AI_DB.prepare(`
+                                UPDATE files 
+                                SET name = ?, content = ?, embedding = ?, file_hash = ?, created_at = ?
+                                WHERE id = ?
+                            `).bind(fileName, content, embedding, pageHash, now, fileId).run();
+                        } else {
+                            console.log(`📄 新Notion页面同步: ${fileName}`);
+                            
+                            // 插入新记录
+                            await env.AI_DB.prepare(`
+                                INSERT INTO files 
+                                (id, name, type, content, embedding, file_hash, created_at) 
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                            `).bind(
+                                fileId,
+                                fileName,
+                                'text',
+                                content,
+                                embedding,
+                                pageHash,
+                                now
+                            ).run();
+                        }
 
                         syncedCount++;
                     }
@@ -2606,6 +2715,386 @@ async function handleGetWorkflowSettings(request, env, headers) {
     }
 }
 __name(handleGetWorkflowSettings, "handleGetWorkflowSettings");
+
+// Sync single Notion page
+async function handleNotionSyncPage(request, env, headers) {
+    if (request.method !== "POST") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), {
+            status: 405,
+            headers
+        });
+    }
+
+    try {
+        const { pageId } = await request.json();
+        
+        if (!pageId) {
+            return new Response(JSON.stringify({ error: "页面ID不能为空" }), {
+                status: 400,
+                headers
+            });
+        }
+
+        const token = await env.AI_KV.get("NOTION_TOKEN");
+        
+        if (!token) {
+            return new Response(JSON.stringify({ error: "未连接Notion" }), {
+                status: 400,
+                headers
+            });
+        }
+
+        // Get page details from cache
+        const pagesData = await env.AI_KV.get("NOTION_PAGES");
+        const pages = pagesData ? JSON.parse(pagesData) : [];
+        const page = pages.find(p => p.id === pageId);
+
+        if (!page) {
+            return new Response(JSON.stringify({ error: "页面不存在" }), {
+                status: 404,
+                headers
+            });
+        }
+
+        // Fetch page content
+        const contentResponse = await fetch(`https://api.notion.com/v1/blocks/${pageId}/children`, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Notion-Version': '2022-06-28'
+            }
+        });
+
+        if (!contentResponse.ok) {
+            return new Response(JSON.stringify({ error: "获取页面内容失败" }), {
+                status: 500,
+                headers
+            });
+        }
+
+        const contentData = await contentResponse.json();
+        const content = extractPageContent(contentData.results);
+
+        if (!content.trim()) {
+            return new Response(JSON.stringify({ error: "页面内容为空" }), {
+                status: 400,
+                headers
+            });
+        }
+
+        // Generate embedding for the content
+        let embedding = null;
+        try {
+            const ragConfigStr = await env.AI_KV.get("RAG_CONFIG");
+            if (ragConfigStr) {
+                const ragConfig = JSON.parse(ragConfigStr);
+                
+                const embeddingResponse = await fetch(`${ragConfig.baseurl}/v1/embeddings`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${ragConfig.apikey}`
+                    },
+                    body: JSON.stringify({
+                        model: ragConfig.model,
+                        input: content
+                    })
+                });
+                
+                if (embeddingResponse.ok) {
+                    const embeddingData = await embeddingResponse.json();
+                    if (embeddingData.data && embeddingData.data[0]) {
+                        embedding = JSON.stringify(embeddingData.data[0].embedding);
+                    }
+                }
+            }
+        } catch (embeddingError) {
+            console.error('Failed to generate embedding:', embeddingError);
+        }
+
+        // 计算页面内容的哈希值
+        const pageHash = await calculateFileHash(content);
+        
+        // 检查是否已存在相同内容的页面（基于内容哈希）
+        const existingFile = await env.AI_DB.prepare(`
+            SELECT id, name, created_at FROM files 
+            WHERE file_hash = ?
+            LIMIT 1
+        `).bind(pageHash).first();
+        
+        const fileName = `Notion: [${pageId}] ${page.title}`;
+        const fileId = existingFile ? existingFile.id : crypto.randomUUID();
+        const now = new Date().toISOString();
+
+        if (existingFile) {
+            console.log(`📄 Notion页面内容重复: ${fileName} 与 ${existingFile.name} 内容相同，将更新现有记录`);
+            
+            // 更新现有记录
+            await env.AI_DB.prepare(`
+                UPDATE files 
+                SET name = ?, content = ?, embedding = ?, file_hash = ?, created_at = ?
+                WHERE id = ?
+            `).bind(fileName, content, embedding, pageHash, now, fileId).run();
+        } else {
+            console.log(`📄 新Notion页面同步: ${fileName}`);
+            
+            // 插入新记录
+            await env.AI_DB.prepare(`
+                INSERT INTO files 
+                (id, name, type, content, embedding, file_hash, created_at) 
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            `).bind(
+                fileId,
+                fileName,
+                'text',
+                content,
+                embedding,
+                pageHash,
+                now
+            ).run();
+        }
+
+        return new Response(JSON.stringify({ 
+            success: true,
+            message: "页面同步成功",
+            pageId: pageId,
+            contentLength: content.length,
+            hasEmbedding: !!embedding
+        }), { headers });
+
+    } catch (error) {
+        console.error("Sync page error:", error);
+        return new Response(JSON.stringify({ error: "同步页面时发生错误" }), {
+            status: 500,
+            headers
+        });
+    }
+}
+__name(handleNotionSyncPage, "handleNotionSyncPage");
+
+// Sync Notion database
+async function handleNotionSyncDatabase(request, env, headers) {
+    if (request.method !== "POST") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), {
+            status: 405,
+            headers
+        });
+    }
+
+    try {
+        const { dbId } = await request.json();
+        
+        if (!dbId) {
+            return new Response(JSON.stringify({ error: "数据库ID不能为空" }), {
+                status: 400,
+                headers
+            });
+        }
+
+        const token = await env.AI_KV.get("NOTION_TOKEN");
+        
+        if (!token) {
+            return new Response(JSON.stringify({ error: "未连接Notion" }), {
+                status: 400,
+                headers
+            });
+        }
+
+        // Get database details from cache
+        const databasesData = await env.AI_KV.get("NOTION_DATABASES");
+        const databases = databasesData ? JSON.parse(databasesData) : [];
+        const database = databases.find(d => d.id === dbId);
+
+        if (!database) {
+            return new Response(JSON.stringify({ error: "数据库不存在" }), {
+                status: 404,
+                headers
+            });
+        }
+
+        // Fetch database entries (pages in the database)
+        const queryResponse = await fetch(`https://api.notion.com/v1/databases/${dbId}/query`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Notion-Version': '2022-06-28',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                page_size: 100
+            })
+        });
+
+        if (!queryResponse.ok) {
+            return new Response(JSON.stringify({ error: "获取数据库内容失败" }), {
+                status: 500,
+                headers
+            });
+        }
+
+        const queryData = await queryResponse.json();
+        const pages = queryData.results;
+        let syncedCount = 0;
+
+        // Sync each page in the database
+        for (const page of pages) {
+            try {
+                const pageId = page.id;
+                const title = extractPageTitle(page);
+                
+                // Fetch page content
+                const contentResponse = await fetch(`https://api.notion.com/v1/blocks/${pageId}/children`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Notion-Version': '2022-06-28'
+                    }
+                });
+
+                if (contentResponse.ok) {
+                    const contentData = await contentResponse.json();
+                    const content = extractPageContent(contentData.results);
+
+                    if (content.trim()) {
+                        // Generate embedding for the content
+                        let embedding = null;
+                        try {
+                            const ragConfigStr = await env.AI_KV.get("RAG_CONFIG");
+                            if (ragConfigStr) {
+                                const ragConfig = JSON.parse(ragConfigStr);
+                                
+                                const embeddingResponse = await fetch(`${ragConfig.baseurl}/v1/embeddings`, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'Authorization': `Bearer ${ragConfig.apikey}`
+                                    },
+                                    body: JSON.stringify({
+                                        model: ragConfig.model,
+                                        input: content
+                                    })
+                                });
+                                
+                                if (embeddingResponse.ok) {
+                                    const embeddingData = await embeddingResponse.json();
+                                    if (embeddingData.data && embeddingData.data[0]) {
+                                        embedding = JSON.stringify(embeddingData.data[0].embedding);
+                                    }
+                                }
+                            }
+                        } catch (embeddingError) {
+                            console.error('Failed to generate embedding:', embeddingError);
+                        }
+
+                        // 计算页面内容的哈希值
+                        const pageHash = await calculateFileHash(content);
+                        
+                        // 检查是否已存在相同内容的页面（基于内容哈希）
+                        const existingFile = await env.AI_DB.prepare(`
+                            SELECT id, name, created_at FROM files 
+                            WHERE file_hash = ?
+                            LIMIT 1
+                        `).bind(pageHash).first();
+                        
+                        const fileName = `Notion DB: [${pageId}] ${title}`;
+                        const fileId = existingFile ? existingFile.id : crypto.randomUUID();
+                        const now = new Date().toISOString();
+
+                        if (existingFile) {
+                            console.log(`📄 Notion数据库页面内容重复: ${fileName} 与 ${existingFile.name} 内容相同，将更新现有记录`);
+                            
+                            // 更新现有记录
+                            await env.AI_DB.prepare(`
+                                UPDATE files 
+                                SET name = ?, content = ?, embedding = ?, file_hash = ?, created_at = ?
+                                WHERE id = ?
+                            `).bind(fileName, content, embedding, pageHash, now, fileId).run();
+                        } else {
+                            console.log(`📄 新Notion数据库页面同步: ${fileName}`);
+                            
+                            // 插入新记录
+                            await env.AI_DB.prepare(`
+                                INSERT INTO files 
+                                (id, name, type, content, embedding, file_hash, created_at) 
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                            `).bind(
+                                fileId,
+                                fileName,
+                                'text',
+                                content,
+                                embedding,
+                                pageHash,
+                                now
+                            ).run();
+                        }
+
+                        syncedCount++;
+                    }
+                }
+            } catch (pageError) {
+                console.error(`Error syncing page ${page.id}:`, pageError);
+            }
+        }
+
+        return new Response(JSON.stringify({ 
+            success: true,
+            message: `数据库同步成功，处理了 ${syncedCount} 个页面`,
+            databaseId: dbId,
+            syncedPages: syncedCount,
+            totalPages: pages.length
+        }), { headers });
+
+    } catch (error) {
+        console.error("Sync database error:", error);
+        return new Response(JSON.stringify({ error: "同步数据库时发生错误" }), {
+            status: 500,
+            headers
+        });
+    }
+}
+__name(handleNotionSyncDatabase, "handleNotionSyncDatabase");
+
+// Check if page is synced
+async function handleCheckPageSynced(request, env, headers) {
+    if (request.method !== "POST") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), {
+            status: 405,
+            headers
+        });
+    }
+
+    try {
+        const { pageId } = await request.json();
+        
+        if (!pageId) {
+            return new Response(JSON.stringify({ error: "页面ID不能为空" }), {
+                status: 400,
+                headers
+            });
+        }
+
+        // Check if page exists in files table by looking for page ID in filename
+        const result = await env.AI_DB.prepare(`
+            SELECT id, created_at FROM files 
+            WHERE name LIKE 'Notion: [%' || ? || ']%' AND type = 'text'
+            LIMIT 1
+        `).bind(pageId).first();
+
+        const synced = !!result;
+
+        return new Response(JSON.stringify({ 
+            synced,
+            pageId,
+            syncedAt: result?.created_at || null
+        }), { headers });
+
+    } catch (error) {
+        console.error("Check page synced error:", error);
+        return new Response(JSON.stringify({ error: "检查页面同步状态时发生错误" }), {
+            status: 500,
+            headers
+        });
+    }
+}
+__name(handleCheckPageSynced, "handleCheckPageSynced");
 
 
 // Check Notion workflow triggers for auto-creation
@@ -2960,22 +3449,47 @@ async function scheduled(event, env, ctx) {
                             console.error('Failed to generate embedding:', embeddingError);
                         }
                         
-                        // Store in files table
-                        const fileId = crypto.randomUUID();
-                        const now = new Date().toISOString();
+                        // 计算页面内容的哈希值
+                        const pageHash = await calculateFileHash(content);
                         
-                        await env.AI_DB.prepare(`
-                            INSERT OR REPLACE INTO files 
-                            (id, name, type, content, embedding, created_at) 
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        `).bind(
-                            fileId,
-                            `Notion: ${page.title}`,
-                            'text',
-                            content,
-                            embedding,
-                            now
-                        ).run();
+                        // 检查是否已存在相同内容的页面（基于内容哈希）
+                        const existingFile = await env.AI_DB.prepare(`
+                            SELECT id, name, created_at FROM files 
+                            WHERE file_hash = ?
+                            LIMIT 1
+                        `).bind(pageHash).first();
+                        
+                        const fileName = `Notion: ${page.title}`;
+                        const fileId = existingFile ? existingFile.id : crypto.randomUUID();
+                        const now = new Date().toISOString();
+
+                        if (existingFile) {
+                            console.log(`📄 自动同步 - Notion页面内容重复: ${fileName} 与 ${existingFile.name} 内容相同，将更新现有记录`);
+                            
+                            // 更新现有记录
+                            await env.AI_DB.prepare(`
+                                UPDATE files 
+                                SET name = ?, content = ?, embedding = ?, file_hash = ?, created_at = ?
+                                WHERE id = ?
+                            `).bind(fileName, content, embedding, pageHash, now, fileId).run();
+                        } else {
+                            console.log(`📄 自动同步 - 新Notion页面同步: ${fileName}`);
+                            
+                            // 插入新记录
+                            await env.AI_DB.prepare(`
+                                INSERT INTO files 
+                                (id, name, type, content, embedding, file_hash, created_at) 
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                            `).bind(
+                                fileId,
+                                fileName,
+                                'text',
+                                content,
+                                embedding,
+                                pageHash,
+                                now
+                            ).run();
+                        }
                         
                         syncedCount++;
                     }

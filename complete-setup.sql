@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS files (
     content TEXT,
     r2_key TEXT,
     embedding TEXT,                     -- 嵌入向量 (JSON格式字符串)
+    file_hash TEXT,                     -- 文件内容哈希值 (SHA-256) 用于重复检查
     created_at TEXT NOT NULL            -- 创建时间 (ISO 8601格式)
 );
 
@@ -19,6 +20,7 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE INDEX IF NOT EXISTS idx_files_type ON files(type);
 CREATE INDEX IF NOT EXISTS idx_files_created ON files(created_at);
 CREATE INDEX IF NOT EXISTS idx_files_name ON files(name);
+CREATE INDEX IF NOT EXISTS idx_files_hash ON files(file_hash);
 
 -- 用户对话历史表 - 存储聊天记录，按API密钥隔离
 CREATE TABLE IF NOT EXISTS conversations (

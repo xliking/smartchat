@@ -2614,6 +2614,21 @@ function displayNotionDatabases() {
     if (typeof lucide !== 'undefined') {
         lucide.createIcons();
     }
+    
+    // Add event listeners to database buttons
+    document.querySelectorAll('.sync-database-btn').forEach(btn => {
+        btn.addEventListener('click', async function() {
+            const dbId = this.getAttribute('data-id');
+            await syncDatabase(dbId);
+        });
+    });
+    
+    document.querySelectorAll('.view-database-btn').forEach(btn => {
+        btn.addEventListener('click', async function() {
+            const dbId = this.getAttribute('data-id');
+            await viewDatabase(dbId);
+        });
+    });
 }
 
 // Load Notion pages
@@ -2635,7 +2650,7 @@ async function loadNotionPages() {
     }
 }
 
-function displayNotionPages() {
+async function displayNotionPages() {
     const container = document.getElementById('notion-pages-list');
     
     if (notionConfig.pages.length === 0) {
@@ -2649,7 +2664,26 @@ function displayNotionPages() {
         pageItem.className = 'flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:bg-gray-50';
         
         const lastModified = new Date(page.last_edited_time).toLocaleDateString();
-        const syncStatus = Math.random() > 0.5 ? 'synced' : 'modified'; // Mock status
+        
+        // Check if page is already synced by looking in files table
+        let syncStatus = 'modified'; // Default to modified
+        try {
+            const syncCheck =  fetch(`${API_BASE_URL}/api/notion/check-page-synced`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + authToken
+                },
+                body: JSON.stringify({ pageId: page.id })
+            });
+            
+            if (syncCheck.ok) {
+                const syncData = syncCheck.json();
+                syncStatus = syncData.synced ? 'synced' : 'modified';
+            }
+        } catch (error) {
+            console.log('Error checking sync status:', error);
+        }
         
         pageItem.innerHTML = `
             <div class="flex items-center">
@@ -2677,6 +2711,14 @@ function displayNotionPages() {
     if (typeof lucide !== 'undefined') {
         lucide.createIcons();
     }
+    
+    // Add event listeners to sync buttons
+    document.querySelectorAll('.sync-page-btn').forEach(btn => {
+        btn.addEventListener('click', async function() {
+            const pageId = this.getAttribute('data-id');
+            await syncSinglePage(pageId);
+        });
+    });
 }
 
 // Load Notion settings from KV storage
@@ -3063,6 +3105,79 @@ function switchNotionTab(tabName) {
     // Populate dropdowns when switching to workflow tab
     if (tabName === 'workflow') {
         populateNotionDropdowns();
+    }
+}
+
+// Sync single Notion page
+async function syncSinglePage(pageId) {
+    try {
+        showNotification('正在同步页面...', 'info');
+        
+        const response = await fetch(`${API_BASE_URL}/api/notion/sync-page`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + authToken
+            },
+            body: JSON.stringify({ pageId })
+        });
+        
+        if (response.ok) {
+            const result = await response.json();
+            showNotification('页面同步成功', 'success');
+            console.log('Sync result:', result);
+        } else {
+            const error = await response.json();
+            showNotification('同步失败: ' + (error.error || '未知错误'), 'error');
+        }
+    } catch (error) {
+        console.error('Sync page error:', error);
+        showNotification('同步过程中发生错误', 'error');
+    }
+}
+
+// Sync Notion database
+async function syncDatabase(dbId) {
+    try {
+        showNotification('正在同步数据库...', 'info');
+        
+        const response = await fetch(`${API_BASE_URL}/api/notion/sync-database`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + authToken
+            },
+            body: JSON.stringify({ dbId })
+        });
+        
+        if (response.ok) {
+            const result = await response.json();
+            showNotification('数据库同步成功', 'success');
+            console.log('Sync result:', result);
+        } else {
+            const error = await response.json();
+            showNotification('同步失败: ' + (error.error || '未知错误'), 'error');
+        }
+    } catch (error) {
+        console.error('Sync database error:', error);
+        showNotification('同步过程中发生错误', 'error');
+    }
+}
+
+// View Notion database
+async function viewDatabase(dbId) {
+    try {
+        // Find the database in the cached list
+        const database = notionConfig.databases.find(db => db.id === dbId);
+        if (database && database.url) {
+            // Open the database in a new tab
+            window.open(database.url, '_blank');
+        } else {
+            showNotification('无法找到数据库链接', 'error');
+        }
+    } catch (error) {
+        console.error('View database error:', error);
+        showNotification('打开数据库时发生错误', 'error');
     }
 }
 

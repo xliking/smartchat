@@ -197,11 +197,15 @@
             right: 20px;
             padding: 16px 20px;
             border-radius: 12px;
-            color: white;
+            color: white !important;
             font-weight: 500;
             z-index: 1000;
             transform: translateX(400px);
             transition: transform 0.3s ease;
+            min-width: 200px;
+            max-width: 400px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            background: #6b7280 !important;
         }
         
         .notification.show {
@@ -209,11 +213,19 @@
         }
         
         .notification.success {
-            background: #10b981;
+            background: #10b981 !important;
         }
         
         .notification.error {
-            background: #ef4444;
+            background: #ef4444 !important;
+        }
+        
+        .notification.warning {
+            background: #f59e0b !important;
+        }
+        
+        .notification.info {
+            background: #3b82f6 !important;
         }
         
         /* 模态框动画 */
