@@ -3,6 +3,49 @@ let API_BASE_URL = 'https://ai-gateway.2190418744.workers.dev';
 let authToken = localStorage.getItem('authToken');
 let isInitialized = false;
 
+// 带认证的fetch包装器，自动处理401错误
+async function authFetch(url, options = {}) {
+    const defaultHeaders = {
+        'Authorization': 'Bearer ' + authToken
+    };
+    
+    const config = {
+        ...options,
+        headers: {
+            ...defaultHeaders,
+            ...options.headers
+        }
+    };
+    
+    try {
+        const response = await fetch(url, config);
+        
+        // 如果返回401状态码，清除认证信息并跳转到登录页面
+        if (response.status === 401) {
+            console.warn('Authentication failed (401), redirecting to login');
+            localStorage.removeItem('authToken');
+            authToken = null;
+            
+            // 隐藏所有页面，显示登录页面
+            document.getElementById('admin-panel').classList.add('hidden');
+            document.getElementById('setup-page').classList.add('hidden');
+            document.getElementById('login-page').classList.remove('hidden');
+            
+            showNotification('登录已过期，请重新登录', 'error');
+            throw new Error('Authentication required');
+        }
+        
+        return response;
+    } catch (error) {
+        // 如果是网络错误或其他错误，直接抛出
+        if (error.message === 'Authentication required') {
+            throw error;
+        }
+        console.error('Fetch error:', error);
+        throw error;
+    }
+}
+
 // 初始化检查
 async function checkInitialization() {
     try {
@@ -113,9 +156,7 @@ async function loadAdminPanel() {
 async function loadConfigs() {
     try {
         // 加载系统配置
-        const systemResponse = await fetch(`${API_BASE_URL}/api/config`, {
-            headers: { 'Authorization': 'Bearer ' + authToken }
-        });
+        const systemResponse = await authFetch(`${API_BASE_URL}/api/config`);
         
         if (systemResponse.ok) {
             const systemConfig = await systemResponse.json();
@@ -131,9 +172,7 @@ async function loadConfigs() {
         await loadModels();
 
         // 加载 AI 配置
-        const aiConfigResponse = await fetch(`${API_BASE_URL}/api/ai-config`, {
-            headers: { 'Authorization': 'Bearer ' + authToken }
-        });
+        const aiConfigResponse = await authFetch(`${API_BASE_URL}/api/ai-config`);
         
         if (aiConfigResponse.ok) {
             const aiConfig = await aiConfigResponse.json();
@@ -149,9 +188,7 @@ async function loadConfigs() {
         initAIConfigListeners();
 
         // 加载 RAG 配置
-        const ragConfigResponse = await fetch(`${API_BASE_URL}/api/rag-config`, {
-            headers: { 'Authorization': 'Bearer ' + authToken }
-        });
+        const ragConfigResponse = await authFetch(`${API_BASE_URL}/api/rag-config`);
         
         if (ragConfigResponse.ok) {
             const ragConfig = await ragConfigResponse.json();
@@ -162,9 +199,7 @@ async function loadConfigs() {
         }
         
         // 加载系统配置
-        const systemConfigResponse = await fetch(`${API_BASE_URL}/api/config`, {
-            headers: { 'Authorization': 'Bearer ' + authToken }
-        });
+        const systemConfigResponse = await authFetch(`${API_BASE_URL}/api/config`);
         
         if (systemConfigResponse.ok) {
             const systemConfig = await systemConfigResponse.json();
@@ -790,9 +825,7 @@ document.getElementById('generate-key-btn').addEventListener('click', async () =
 // 加载API密钥
 async function loadApiKeys() {
     try {
-        const response = await fetch(`${API_BASE_URL}/api/keys`, {
-            headers: { 'Authorization': 'Bearer ' + authToken }
-        });
+        const response = await authFetch(`${API_BASE_URL}/api/keys`);
         
         if (response.ok) {
             const keys = await response.json();
@@ -1189,9 +1222,7 @@ const filesPerPage = 10;
 async function loadFiles(page = 1) {
     currentFilePage = page;
     try {
-        const response = await fetch(`${API_BASE_URL}/api/files?page=${page}&limit=${filesPerPage}`, {
-            headers: { 'Authorization': 'Bearer ' + authToken }
-        });
+        const response = await authFetch(`${API_BASE_URL}/api/files?page=${page}&limit=${filesPerPage}`);
         
         if (response.ok) {
             const data = await response.json();
@@ -1215,9 +1246,13 @@ async function loadFiles(page = 1) {
                         <h3 class="text-lg font-semibold text-gray-700 mb-2">知识库为空</h3>
                         <p class="text-gray-500 mb-6">上传文档或添加文本来构建您的知识库</p>
                         <div class="flex justify-center space-x-4">
-                            <button onclick="document.querySelector('.nav-item[data-section=\"knowledge\"]').click()" class="btn-primary px-6 py-3 text-white font-semibold rounded-xl">
+                            <button onclick="document.getElementById('open-file-modal').click()" class="btn-primary px-6 py-3 text-white font-semibold rounded-xl">
                                 <i data-lucide="upload" class="inline w-5 h-5 mr-2"></i>
                                 上传文件
+                            </button>
+                            <button onclick="document.getElementById('open-text-modal').click()" class="btn-secondary px-6 py-3 text-gray-700 bg-gray-100 hover:bg-gray-200 font-semibold rounded-xl">
+                                <i data-lucide="edit-3" class="inline w-5 h-5 mr-2"></i>
+                                添加文本
                             </button>
                         </div>
                     </div>
@@ -1452,9 +1487,7 @@ let fetchedModels = []; // 从AI服务获取的模型列表
 // 加载模型列表
 async function loadModels() {
     try {
-        const response = await fetch(`${API_BASE_URL}/api/models`, {
-            headers: { 'Authorization': 'Bearer ' + authToken }
-        });
+        const response = await authFetch(`${API_BASE_URL}/api/models`);
         
         if (response.ok) {
             models = await response.json();
@@ -2235,9 +2268,7 @@ document.addEventListener('DOMContentLoaded', function() {
 // 加载统计信息
 async function loadStatistics() {
     try {
-        const response = await fetch(`${API_BASE_URL}/api/statistics`, {
-            headers: { 'Authorization': 'Bearer ' + authToken }
-        });
+        const response = await authFetch(`${API_BASE_URL}/api/statistics`);
         
         if (response.ok) {
             const stats = await response.json();
@@ -2397,11 +2428,7 @@ checkInitialization();
 // 页面加载时检查Notion连接状态
 async function checkNotionConnection() {
     try {
-        const response = await fetch(`${API_BASE_URL}/api/notion/status`, {
-            headers: {
-                'Authorization': 'Bearer ' + authToken
-            }
-        });
+        const response = await authFetch(`${API_BASE_URL}/api/notion/status`);
         
         if (response.ok) {
             const data = await response.json();
@@ -2536,11 +2563,7 @@ function updateNotionConnectionStatus(connected) {
 // Load Notion databases
 async function loadNotionDatabases() {
     try {
-        const response = await fetch(`${API_BASE_URL}/api/notion/databases`, {
-            headers: {
-                'Authorization': 'Bearer ' + authToken
-            }
-        });
+        const response = await authFetch(`${API_BASE_URL}/api/notion/databases`);
         
         if (response.ok) {
             const data = await response.json();
@@ -2634,11 +2657,7 @@ function displayNotionDatabases() {
 // Load Notion pages
 async function loadNotionPages() {
     try {
-        const response = await fetch(`${API_BASE_URL}/api/notion/pages`, {
-            headers: {
-                'Authorization': 'Bearer ' + authToken
-            }
-        });
+        const response = await authFetch(`${API_BASE_URL}/api/notion/pages`);
         
         if (response.ok) {
             const data = await response.json();
@@ -2917,36 +2936,21 @@ async function performSelectiveSync(selectedPages) {
         
         for (const page of selectedPages) {
             try {
-                // Fetch page content
-                const contentResponse = await fetch(`https://api.notion.com/v1/blocks/${page.id}/children`, {
+                // Use backend API to sync single page
+                const syncResponse = await authFetch(`${API_BASE_URL}/api/notion/sync-page`, {
+                    method: 'POST',
                     headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Notion-Version': '2022-06-28'
-                    }
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        pageId: page.id
+                    })
                 });
                 
-                if (contentResponse.ok) {
-                    const contentData = await contentResponse.json();
-                    const content = extractPageContentFrontend(contentData.results);
-                    
-                    if (content.trim()) {
-                        // Store via API
-                        const storeResponse = await fetch(`${API_BASE_URL}/api/upload`, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': 'Bearer ' + authToken
-                            },
-                            body: JSON.stringify({
-                                text: content,
-                                name: `Notion: ${page.title}`
-                            })
-                        });
-                        
-                        if (storeResponse.ok) {
-                            syncedCount++;
-                        }
-                    }
+                if (syncResponse.ok) {
+                    syncedCount++;
+                } else {
+                    console.error(`Failed to sync page ${page.id}:`, syncResponse.status);
                 }
             } catch (pageError) {
                 console.error(`Error syncing page ${page.id}:`, pageError);
@@ -2964,11 +2968,7 @@ async function performSelectiveSync(selectedPages) {
 
 async function getNotionToken() {
     try {
-        const response = await fetch(`${API_BASE_URL}/api/notion/status`, {
-            headers: {
-                'Authorization': 'Bearer ' + authToken
-            }
-        });
+        const response = await authFetch(`${API_BASE_URL}/api/notion/status`);
         
         if (response.ok) {
             const data = await response.json();
