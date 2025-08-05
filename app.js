@@ -1,7 +1,113 @@
-// API 基础配置
-let API_BASE_URL = 'https://ai-gateway.2190418744.workers.dev';
+// API 基础配置  
+let API_BASE_URL = 'https://ai-gateway.easyapi.me';
 let authToken = localStorage.getItem('authToken');
 let isInitialized = false;
+
+// 自定义确认对话框 - 替换系统confirm
+function customConfirm(message, options = {}) {
+    return new Promise((resolve) => {
+        const {
+            title = '确认操作',
+            subtitle = '此操作可能影响现有配置',
+            confirmText = '确认',
+            cancelText = '取消',
+            details = null,
+            type = 'warning' // warning, danger, info
+        } = options;
+
+        const dialog = document.getElementById('custom-confirm');
+        const titleEl = document.getElementById('confirm-title');
+        const subtitleEl = document.getElementById('confirm-subtitle');
+        const messageEl = document.getElementById('confirm-message');
+        const detailsEl = document.getElementById('confirm-details');
+        const detailsContentEl = document.getElementById('confirm-details-content');
+        const okBtn = document.getElementById('confirm-ok');
+        const cancelBtn = document.getElementById('confirm-cancel');
+
+        // 设置内容
+        titleEl.textContent = title;
+        subtitleEl.textContent = subtitle;
+        messageEl.innerHTML = message.replace(/\n/g, '<br>');
+
+        // 设置详细信息
+        if (details) {
+            detailsEl.classList.remove('hidden');
+            if (typeof details === 'string') {
+                detailsContentEl.innerHTML = details.replace(/\n/g, '<br>');
+            } else {
+                detailsContentEl.innerHTML = details;
+            }
+        } else {
+            detailsEl.classList.add('hidden');
+        }
+
+        // 根据类型调整样式
+        const iconContainer = dialog.querySelector('.bg-gradient-to-br');
+        const icon = dialog.querySelector('[data-lucide="alert-triangle"]');
+        
+        if (type === 'danger') {
+            iconContainer.className = 'w-12 h-12 bg-gradient-to-br from-red-500 to-red-600 rounded-full flex items-center justify-center mr-4';
+            icon.setAttribute('data-lucide', 'x-circle');
+            okBtn.className = 'flex-1 px-4 py-3 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-medium rounded-xl transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-red-500 shadow-lg hover:shadow-xl';
+        } else if (type === 'info') {
+            iconContainer.className = 'w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center mr-4';
+            icon.setAttribute('data-lucide', 'info');
+            okBtn.className = 'flex-1 px-4 py-3 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-medium rounded-xl transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-lg hover:shadow-xl';
+        } else {
+            iconContainer.className = 'w-12 h-12 bg-gradient-to-br from-amber-500 to-orange-600 rounded-full flex items-center justify-center mr-4';
+            icon.setAttribute('data-lucide', 'alert-triangle');
+            okBtn.className = 'flex-1 px-4 py-3 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white font-medium rounded-xl transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-lg hover:shadow-xl';
+        }
+
+        // 设置按钮文本
+        okBtn.innerHTML = `<i data-lucide="check" class="w-4 h-4 inline mr-2"></i>${confirmText}`;
+        cancelBtn.innerHTML = `<i data-lucide="x" class="w-4 h-4 inline mr-2"></i>${cancelText}`;
+
+        // 重新初始化图标
+        lucide.createIcons();
+
+        // 显示对话框
+        dialog.classList.remove('hidden');
+        dialog.classList.add('flex');
+        setTimeout(() => {
+            dialog.classList.add('show');
+        }, 10);
+
+        // 事件处理
+        const handleConfirm = () => {
+            cleanup();
+            resolve(true);
+        };
+
+        const handleCancel = () => {
+            cleanup();
+            resolve(false);
+        };
+
+        const cleanup = () => {
+            dialog.classList.remove('show');
+            okBtn.removeEventListener('click', handleConfirm);
+            cancelBtn.removeEventListener('click', handleCancel);
+            
+            setTimeout(() => {
+                dialog.classList.add('hidden');
+                dialog.classList.remove('flex');
+            }, 300);
+        };
+
+        okBtn.addEventListener('click', handleConfirm);
+        cancelBtn.addEventListener('click', handleCancel);
+
+        // ESC键关闭
+        const handleEsc = (e) => {
+            if (e.key === 'Escape') {
+                handleCancel();
+                document.removeEventListener('keydown', handleEsc);
+            }
+        };
+        document.addEventListener('keydown', handleEsc);
+    });
+}
 
 // 带认证的fetch包装器，自动处理401错误
 async function authFetch(url, options = {}) {
@@ -250,7 +356,17 @@ document.getElementById('ai-config-form').addEventListener('submit', async (e) =
         // 如果BaseURL变更且存在模型绑定，提示用户
         if (modelBindingsNeedUpdate && existingConfig.selectedModels && existingConfig.selectedModels.length > 0) {
             const modelCount = existingConfig.selectedModels.length;
-            const confirmUpdate = confirm(`检测到BaseURL已变更，现有的 ${modelCount} 个模型绑定关系可能不再适用。\n\n建议操作：\n• 点击"确定"将清除现有模型绑定，请重新获取和绑定模型\n• 点击"取消"仅保存AI配置，保留现有模型绑定\n\n推荐选择"确定"以确保模型配置的一致性。`);
+            const confirmUpdate = await customConfirm(
+                `检测到BaseURL已变更，现有的 ${modelCount} 个模型绑定关系可能不再适用。`,
+                {
+                    title: 'BaseURL配置变更',
+                    subtitle: '需要处理模型绑定关系',
+                    details: `建议操作：\n• 点击"确认"将清除现有模型绑定，请重新获取和绑定模型\n• 点击"取消"仅保存AI配置，保留现有模型绑定\n\n推荐选择"确认"以确保模型配置的一致性。`,
+                    confirmText: '清除模型绑定',
+                    cancelText: '保留配置',
+                    type: 'warning'
+                }
+            );
             
             if (confirmUpdate) {
                 // 清除现有的模型绑定
@@ -269,6 +385,36 @@ document.getElementById('ai-config-form').addEventListener('submit', async (e) =
                     
                     // 清除前端显示
                     updateAIConfigModelDisplay([]);
+                    
+                    // 清空模型列表数据
+                    models = [];
+                    
+                    // 清空模型列表显示
+                    const modelsList = document.getElementById('models-list');
+                    if (modelsList) {
+                        modelsList.innerHTML = '';
+                    }
+                    
+                    // 禁用保存按钮直到有新数据
+                    const saveBtn = document.getElementById('save-models-btn');
+                    if (saveBtn) {
+                        saveBtn.disabled = true;
+                    }
+                    
+                    // 清除模型管理列表的数据（/api/models 端点）
+                    try {
+                        await fetch(`${API_BASE_URL}/api/models`, {
+                            method: 'POST',
+                            headers: { 
+                                'Content-Type': 'application/json',
+                                'Authorization': 'Bearer ' + authToken 
+                            },
+                            body: JSON.stringify([])
+                        });
+                    } catch (error) {
+                        console.error('Failed to clear models list:', error);
+                    }
+                    
                     showNotification(`已清除 ${modelCount} 个模型绑定，请重新获取模型列表`, 'info');
                 } catch (error) {
                     console.error('Failed to clear model bindings:', error);
@@ -723,7 +869,16 @@ async function loadSelectedModelsFromConfig(aiConfig) {
 // 清空所有选中的模型
 async function clearAllSelectedModels() {
     try {
-        const confirmed = confirm('确定要清空所有已选择的模型吗？');
+            const confirmed = await customConfirm(
+            '确定要清空所有已选择的模型吗？',
+            {
+                title: '清空已选择模型',
+                subtitle: '此操作将清除AI配置中的所有已选择模型',
+                confirmText: '清空模型',
+                cancelText: '取消',
+                type: 'warning'
+            }
+        );
         if (!confirmed) return;
         
         // 清空KV存储中的模型配置
@@ -1175,7 +1330,6 @@ document.getElementById('open-text-modal').addEventListener('click', openTextMod
 document.getElementById('text-modal-close').addEventListener('click', closeTextModal);
 document.getElementById('text-modal-cancel').addEventListener('click', closeTextModal);
 
-document.getElementById('confirm-cancel').addEventListener('click', closeConfirmModal);
 
 // 文件上传（模态框版本）
 document.getElementById('modal-upload-file-btn').addEventListener('click', async () => {
@@ -1750,7 +1904,18 @@ async function renderModels() {
 
 // 清除模型绑定关系
 async function clearModelBindings() {
-    if (!confirm('确定要清除所有模型绑定关系吗？此操作不可撤销。')) {
+    const confirmed = await customConfirm(
+        '确定要清除所有模型绑定关系吗？此操作不可撤销。',
+        {
+            title: '清除模型绑定关系',
+            subtitle: '此操作将删除所有模型与AI服务的绑定',
+            confirmText: '清除绑定',
+            cancelText: '取消',
+            type: 'danger'
+        }
+    );
+    
+    if (!confirmed) {
         return;
     }
     
@@ -1777,11 +1942,40 @@ async function clearModelBindings() {
             // 清除AI配置中的模型显示
             updateAIConfigModelDisplay([]);
             
-            // 保存并重新渲染
-            saveModels();
+            // 清空模型列表数据
+            models = [];
+            
+            // 清空模型列表显示
+            const modelsList = document.getElementById('models-list');
+            if (modelsList) {
+                modelsList.innerHTML = '';
+            }
+            
+            // 禁用保存按钮直到有新数据
+            const saveBtn = document.getElementById('save-models-btn');
+            if (saveBtn) {
+                saveBtn.disabled = true;
+            }
+            
+            // 清除服务器端的模型数据
+            try {
+                await fetch(`${API_BASE_URL}/api/models`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken 
+                    },
+                    body: JSON.stringify([])
+                });
+            } catch (error) {
+                console.error('Failed to clear server models:', error);
+            }
+            
+            // 保存并重新渲染（跳过验证）
+            await saveModels(true);
             await renderModels();
             
-            showNotification('已清除所有模型绑定关系', 'success');
+            showNotification('已清除所有模型绑定关系，请重新获取模型列表', 'success');
         } else {
             showNotification('清除模型绑定关系失败', 'error');
         }
@@ -2208,7 +2402,7 @@ async function deleteModel(index) {
 }
 
 // 保存模型配置
-async function saveModels() {
+async function saveModels(skipValidation = false) {
     try {
         // 验证模型数据
         for (let i = 0; i < models.length; i++) {
@@ -2231,6 +2425,15 @@ async function saveModels() {
             }
         }
         
+        // 检查是否有模型被勾选（至少需要一个模型被绑定）
+        if (!skipValidation) {
+            const hasSelectedModels = models.some(model => model.boundModels && model.boundModels.length > 0);
+            if (!hasSelectedModels) {
+                showNotification('请至少勾选一个模型进行绑定后再保存', 'error');
+                return;
+            }
+        }
+        
         const response = await fetch(`${API_BASE_URL}/api/models`, {
             method: 'POST',
             headers: { 
@@ -2241,6 +2444,8 @@ async function saveModels() {
         });
 
         if (response.ok) {
+            // 保存成功后重新加载模型数据以保持同步
+            await loadModels();
             showNotification('模型配置保存成功', 'success');
         } else {
             const error = await response.json();
@@ -3481,7 +3686,88 @@ document.addEventListener('DOMContentLoaded', function() {
         // Apply filter to pages
         filterNotionPagesByType(filterType);
     });
+    
+    // 确认对话框事件监听器
+    document.getElementById('confirm-cancel')?.addEventListener('click', closeConfirmModal);
+    document.getElementById('confirm-close')?.addEventListener('click', closeConfirmModal);
+    
+    // 备忘录功能
+    const memoBtn = document.getElementById('memo-btn');
+    const memoModal = document.getElementById('memo-modal');
+    const memoModalContent = document.getElementById('memo-modal-content');
+    const memoModalClose = document.getElementById('memo-modal-close');
+    const memoModalCancel = document.getElementById('memo-modal-cancel');
+    const memoModalSave = document.getElementById('memo-modal-save');
+    const memoContent = document.getElementById('memo-content');
+    
+    // 打开备忘录模态框
+    if (memoBtn) {
+        memoBtn.addEventListener('click', openMemoModal);
+    }
+    
+    // 关闭备忘录模态框
+    if (memoModalClose) {
+        memoModalClose.addEventListener('click', closeMemoModal);
+    }
+    
+    if (memoModalCancel) {
+        memoModalCancel.addEventListener('click', closeMemoModal);
+    }
+    
+    // 保存备忘录
+    if (memoModalSave) {
+        memoModalSave.addEventListener('click', saveMemo);
+    }
+    
+    // 点击模态框外部关闭
+    if (memoModal) {
+        memoModal.addEventListener('click', (e) => {
+            if (e.target === memoModal) {
+                closeMemoModal();
+            }
+        });
+    }
 });
+
+// 备忘录相关函数
+function openMemoModal() {
+    const memoModal = document.getElementById('memo-modal');
+    const memoModalContent = document.getElementById('memo-modal-content');
+    const memoContent = document.getElementById('memo-content');
+    
+    // 加载保存的备忘录内容
+    const savedMemo = localStorage.getItem('systemMemo') || '';
+    memoContent.value = savedMemo;
+    
+    memoModal.classList.remove('hidden');
+    setTimeout(() => {
+        memoModalContent.classList.remove('scale-95', 'opacity-0');
+        memoModalContent.classList.add('scale-100', 'opacity-100');
+    }, 10);
+}
+
+function closeMemoModal() {
+    const memoModal = document.getElementById('memo-modal');
+    const memoModalContent = document.getElementById('memo-modal-content');
+    
+    memoModalContent.classList.remove('scale-100', 'opacity-100');
+    memoModalContent.classList.add('scale-95', 'opacity-0');
+    
+    setTimeout(() => {
+        memoModal.classList.add('hidden');
+    }, 300);
+}
+
+function saveMemo() {
+    const memoContent = document.getElementById('memo-content');
+    const content = memoContent.value.trim();
+    
+    // 保存到本地存储
+    localStorage.setItem('systemMemo', content);
+    
+    showNotification('备忘录已保存', 'success');
+    closeMemoModal();
+}
 
 function filterNotionPages(searchTerm) {
     const pageItems = document.querySelectorAll('#notion-pages-list > div');
