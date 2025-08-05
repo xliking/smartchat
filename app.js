@@ -219,13 +219,64 @@ async function loadConfigs() {
 document.getElementById('ai-config-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     
+    const newBaseUrl = document.getElementById('ai-baseurl').value;
     const config = {
-        baseurl: document.getElementById('ai-baseurl').value,
+        baseurl: newBaseUrl,
         apikeys: document.getElementById('ai-apikeys').value.split(/[\n,]+/).map(key => key.trim()).filter(key => key),
         model: document.getElementById('ai-model').value
     };
 
     try {
+        // 获取现有的AI模型配置以检查BaseURL是否变更
+        let existingConfig = null;
+        let modelBindingsNeedUpdate = false;
+        
+        try {
+            const existingResponse = await fetch(`${API_BASE_URL}/api/ai-model-config`, {
+                headers: { 'Authorization': 'Bearer ' + authToken }
+            });
+            if (existingResponse.ok) {
+                existingConfig = await existingResponse.json();
+                
+                // 检查BaseURL是否发生变更
+                if (existingConfig.baseUrl && existingConfig.baseUrl !== newBaseUrl) {
+                    modelBindingsNeedUpdate = true;
+                }
+            }
+        } catch (error) {
+            console.log('No existing model config found');
+        }
+
+        // 如果BaseURL变更且存在模型绑定，提示用户
+        if (modelBindingsNeedUpdate && existingConfig.selectedModels && existingConfig.selectedModels.length > 0) {
+            const modelCount = existingConfig.selectedModels.length;
+            const confirmUpdate = confirm(`检测到BaseURL已变更，现有的 ${modelCount} 个模型绑定关系可能不再适用。\n\n建议操作：\n• 点击"确定"将清除现有模型绑定，请重新获取和绑定模型\n• 点击"取消"仅保存AI配置，保留现有模型绑定\n\n推荐选择"确定"以确保模型配置的一致性。`);
+            
+            if (confirmUpdate) {
+                // 清除现有的模型绑定
+                try {
+                    await fetch(`${API_BASE_URL}/api/ai-model-config`, {
+                        method: 'POST',
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + authToken 
+                        },
+                        body: JSON.stringify({
+                            selectedModels: [],
+                            baseUrl: newBaseUrl
+                        })
+                    });
+                    
+                    // 清除前端显示
+                    updateAIConfigModelDisplay([]);
+                    showNotification(`已清除 ${modelCount} 个模型绑定，请重新获取模型列表`, 'info');
+                } catch (error) {
+                    console.error('Failed to clear model bindings:', error);
+                }
+            }
+        }
+
+        // 保存AI配置
         const response = await fetch(`${API_BASE_URL}/api/ai-config`, {
             method: 'POST',
             headers: { 
@@ -236,7 +287,11 @@ document.getElementById('ai-config-form').addEventListener('submit', async (e) =
         });
 
         if (response.ok) {
-            showNotification('AI 配置保存成功', 'success');
+            if (modelBindingsNeedUpdate) {
+                showNotification('AI 配置已更新，请重新获取模型列表', 'success');
+            } else {
+                showNotification('AI 配置保存成功', 'success');
+            }
         } else {
             showNotification('AI 配置保存失败', 'error');
         }
@@ -1542,7 +1597,7 @@ async function loadModels() {
             models = await response.json();
             // 只显示自定义模型（name和id不相等或者没有id的模型）
             models = models.filter(model => !model.id || model.id !== model.name);
-            renderModels();
+            await renderModels();
         }
     } catch (error) {
         console.error('Load models error:', error);
@@ -1551,9 +1606,53 @@ async function loadModels() {
 }
 
 // 渲染模型列表
-function renderModels() {
+async function renderModels() {
     const container = document.getElementById('models-list');
     container.innerHTML = '';
+    
+    // 检查BaseURL一致性并显示警告
+    let baseUrlWarningHtml = '';
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/ai-model-config`, {
+            headers: { 'Authorization': 'Bearer ' + authToken }
+        });
+        if (response.ok) {
+            const modelConfig = await response.json();
+            const aiConfigResponse = await fetch(`${API_BASE_URL}/api/ai-config`, {
+                headers: { 'Authorization': 'Bearer ' + authToken }
+            });
+            
+            if (aiConfigResponse.ok) {
+                const aiConfig = await aiConfigResponse.json();
+                
+                // 检查BaseURL是否一致
+                if (modelConfig.baseUrl && aiConfig.baseurl && modelConfig.baseUrl !== aiConfig.baseurl) {
+                    baseUrlWarningHtml = `
+                        <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
+                            <div class="flex items-start">
+                                <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-600 mt-0.5 mr-3 flex-shrink-0"></i>
+                                <div class="flex-1">
+                                    <h4 class="text-sm font-semibold text-amber-800 mb-1">BaseURL配置不一致</h4>
+                                    <p class="text-sm text-amber-700 mb-2">
+                                        检测到AI模型配置中的BaseURL与当前AI服务的BaseURL不一致，这可能导致模型绑定关系失效。
+                                    </p>
+                                    <div class="text-xs text-amber-600 bg-amber-100 rounded-lg p-2">
+                                        <div><strong>模型配置BaseURL:</strong> ${modelConfig.baseUrl}</div>
+                                        <div><strong>当前AI服务BaseURL:</strong> ${aiConfig.baseurl}</div>
+                                    </div>
+                                    <button onclick="clearModelBindings()" class="mt-2 px-3 py-1 bg-amber-600 text-white text-sm rounded-lg hover:bg-amber-700 transition-colors">
+                                        清除模型绑定关系
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+        }
+    } catch (error) {
+        console.log('Error checking BaseURL consistency:', error);
+    }
     
     // 先过滤出自定义模型（name和id不相等或者没有id的模型）
     const customModels = models.filter(model => !model.id || model.id !== model.name);
@@ -1574,7 +1673,7 @@ function renderModels() {
     `;
     
     if (customModels.length === 0) {
-        container.innerHTML = controlsHtml + `
+        container.innerHTML = baseUrlWarningHtml + controlsHtml + `
             <div class="glass-card rounded-2xl p-12 text-center">
                 <i data-lucide="brain" class="w-16 h-16 text-gray-400 mx-auto mb-4"></i>
                 <h3 class="text-lg font-semibold text-gray-700 mb-2">暂无模型配置</h3>
@@ -1585,8 +1684,8 @@ function renderModels() {
         return;
     }
     
-    // 显示控制按钮
-    container.innerHTML = controlsHtml;
+    // 显示警告和控制按钮
+    container.innerHTML = baseUrlWarningHtml + controlsHtml;
     
     customModels.forEach((model, index) => {
         // 显示绑定的模型
@@ -1649,11 +1748,54 @@ function renderModels() {
     lucide.createIcons();
 }
 
+// 清除模型绑定关系
+async function clearModelBindings() {
+    if (!confirm('确定要清除所有模型绑定关系吗？此操作不可撤销。')) {
+        return;
+    }
+    
+    try {
+        // 清除后端存储的模型配置
+        const response = await fetch(`${API_BASE_URL}/api/ai-model-config`, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + authToken 
+            },
+            body: JSON.stringify({
+                selectedModels: [],
+                baseUrl: ''
+            })
+        });
+        
+        if (response.ok) {
+            // 清除前端模型数据中的绑定关系
+            models.forEach(model => {
+                model.boundModels = [];
+            });
+            
+            // 清除AI配置中的模型显示
+            updateAIConfigModelDisplay([]);
+            
+            // 保存并重新渲染
+            saveModels();
+            await renderModels();
+            
+            showNotification('已清除所有模型绑定关系', 'success');
+        } else {
+            showNotification('清除模型绑定关系失败', 'error');
+        }
+    } catch (error) {
+        console.error('Failed to clear model bindings:', error);
+        showNotification('清除模型绑定关系请求失败', 'error');
+    }
+}
+
 // 切换RAG功能
-function toggleRag(index) {
+async function toggleRag(index) {
     models[index].selectedRag = !models[index].selectedRag;
     saveModels();
-    renderModels();
+    await renderModels();
     showNotification(`模型 "${models[index].name}" 的RAG功能已${models[index].selectedRag ? '启用' : '禁用'}`, 'success');
 }
 
@@ -1779,7 +1921,7 @@ function showModelSelectionDialog() {
                 <label for="select-all-models" class="text-sm text-gray-700">全选</label>
             </div>
         </div>
-    `, () => {
+    `, async () => {
         const selectedModels = Array.from(document.querySelectorAll('.model-checkbox:checked'))
             .map(checkbox => {
                 const index = parseInt(checkbox.dataset.index);
@@ -1809,7 +1951,7 @@ function showModelSelectionDialog() {
         // 添加选中的模型到现有模型列表
         models = [...models, ...selectedModels];
         saveModels();
-        renderModels();
+        await renderModels();
         showNotification(`成功添加 ${selectedModels.length} 个模型`, 'success');
         return true;
     }, { width: '4xl' });
@@ -1892,7 +2034,7 @@ async function addModel() {
                 <label for="model-rag" class="text-sm text-gray-700">启用RAG检索增强</label>
             </div>
         </div>
-    `, () => {
+    `, async () => {
         const name = document.getElementById('model-name').value.trim();
         const systemPrompt = document.getElementById('model-prompt').value.trim();
         const selectedRag = document.getElementById('model-rag').checked;
@@ -1925,7 +2067,7 @@ async function addModel() {
         
         models.push(newModel);
         saveModels();
-        renderModels();
+        await renderModels();
         showNotification('模型添加成功', 'success');
         
         // 自动关闭模态框
@@ -1998,7 +2140,7 @@ async function editModel(index) {
                 <label for="model-rag" class="text-sm text-gray-700">启用RAG检索增强</label>
             </div>
         </div>
-    `, () => {
+    `, async () => {
         const name = document.getElementById('model-name').value.trim();
         const systemPrompt = document.getElementById('model-prompt').value.trim();
         const selectedRag = document.getElementById('model-rag').checked;
@@ -2030,7 +2172,7 @@ async function editModel(index) {
         };
         
         saveModels();
-        renderModels();
+        await renderModels();
         showNotification('模型更新成功', 'success');
         
         // 自动关闭模态框
@@ -2040,7 +2182,7 @@ async function editModel(index) {
 }
 
 // 删除模型
-function deleteModel(index) {
+async function deleteModel(index) {
     const model = models[index];
     showModal('删除模型', `
         <div class="text-center">
@@ -2056,10 +2198,10 @@ function deleteModel(index) {
                 <p class="text-sm text-yellow-800">⚠️ 删除后，使用该模型的API调用将无法获取对应的系统提示词。</p>
             </div>
         </div>
-    `, () => {
+    `, async () => {
         models.splice(index, 1);
         saveModels();
-        renderModels();
+        await renderModels();
         showNotification('模型删除成功', 'success');
         return true;
     });
