@@ -91,7 +91,15 @@ async function handleRequest(request, env) {
             return handleDeleteFile(request, env, corsHeaders);
         }
         if (path.startsWith("/api/files/") && request.method === "GET") {
-            return handleGetFile(request, env, corsHeaders);
+            const url = new URL(request.url);
+            const fileId = url.pathname.split("/").pop();
+            
+            // 检查是否是下载请求
+            if (url.searchParams.get('download') === 'true') {
+                return handleDownloadFile(request, env, corsHeaders, fileId);
+            } else {
+                return handleGetFile(request, env, corsHeaders);
+            }
         }
         if (path === "/api/keys") {
             return handleKeys(request, env, corsHeaders);
@@ -1330,6 +1338,107 @@ async function handleGetFile(request, env, corsHeaders) {
     }
 }
 __name(handleGetFile, "handleGetFile");
+async function handleDownloadFile(request, env, corsHeaders, fileId) {
+    if (!await verifyAdmin(request, env)) {
+        return new Response(JSON.stringify({ error: "未授权" }), {
+            status: 401,
+            headers: { ...corsHeaders, "Content-Type": "application/json" }
+        });
+    }
+    
+    if (!fileId) {
+        return new Response(JSON.stringify({ error: "文件ID不能为空" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" }
+        });
+    }
+    
+    try {
+        const fileResult = await env.AI_DB.prepare(`
+            SELECT id, name, type, content, created_at FROM files WHERE id = ?
+        `).bind(fileId).first();
+        
+        if (!fileResult) {
+            return new Response(JSON.stringify({ error: "文件不存在" }), {
+                status: 404,
+                headers: { ...corsHeaders, "Content-Type": "application/json" }
+            });
+        }
+        
+        let fileContent = fileResult.content;
+        
+        // 如果是文件类型且内容为空，尝试从R2获取
+        if (fileResult.type === "file" && (!fileContent || fileContent.trim() === '')) {
+            try {
+                const r2Object = await env.AI_R2.get(`files/${fileResult.id}`);
+                if (r2Object) {
+                    fileContent = await r2Object.text();
+                }
+            } catch (error) {
+                console.error("获取R2文件内容失败:", error);
+                return new Response(JSON.stringify({ error: "无法获取文件内容" }), {
+                    status: 500,
+                    headers: { ...corsHeaders, "Content-Type": "application/json" }
+                });
+            }
+        }
+        
+        if (!fileContent) {
+            return new Response(JSON.stringify({ error: "文件内容为空" }), {
+                status: 404,
+                headers: { ...corsHeaders, "Content-Type": "application/json" }
+            });
+        }
+        
+        // 确定文件名和内容类型
+        let fileName = fileResult.name;
+        let contentType = 'text/plain';
+        
+        // 根据文件类型设置内容类型
+        if (fileResult.type === 'text') {
+            contentType = 'text/plain; charset=utf-8';
+            // 如果没有.txt后缀，添加一个
+            if (!fileName.endsWith('.txt')) {
+                fileName += '.txt';
+            }
+        } else if (fileResult.type === 'file') {
+            // 尝试从文件名确定内容类型
+            if (fileName.endsWith('.txt')) {
+                contentType = 'text/plain; charset=utf-8';
+            } else if (fileName.endsWith('.md')) {
+                contentType = 'text/markdown; charset=utf-8';
+            } else if (fileName.endsWith('.pdf')) {
+                contentType = 'application/pdf';
+            } else if (fileName.endsWith('.doc') || fileName.endsWith('.docx')) {
+                contentType = 'application/msword';
+            } else {
+                contentType = 'application/octet-stream';
+            }
+        }
+        
+        // 创建下载响应
+        const headers = {
+            ...corsHeaders,
+            'Content-Type': contentType,
+            'Content-Disposition': `attachment; filename="${encodeURIComponent(fileName)}"`,
+            'Content-Length': fileContent.length.toString()
+        };
+        
+        return new Response(fileContent, {
+            status: 200,
+            headers: headers
+        });
+        
+    } catch (error) {
+        console.error("下载文件错误:", error);
+        return new Response(JSON.stringify({ error: "下载文件失败" }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" }
+        });
+    }
+}
+__name(handleDownloadFile, "handleDownloadFile");
+
 async function getConfiguration(env) {
     const aiConfigData = await env.AI_KV.get("AI_CONFIG");
     const ragConfigData = await env.AI_KV.get("RAG_CONFIG");

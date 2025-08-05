@@ -1316,6 +1316,9 @@ async function loadFiles(page = 1) {
                                 <i data-lucide="eye" class="w-4 h-4"></i>
                             </button>
                         ` : ''}
+                        <button onclick="downloadFile('${file.id}', '${file.name}', '${file.type}')" class="px-3 py-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors duration-200" title="下载">
+                            <i data-lucide="download" class="w-4 h-4"></i>
+                        </button>
                         <button onclick="deleteFile('${file.id}', '${file.name}')" class="px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors duration-200" title="删除">
                             <i data-lucide="trash-2" class="w-4 h-4"></i>
                         </button>
@@ -1447,6 +1450,52 @@ function getFileTypeColor(type) {
         'default': 'bg-gray-500'
     };
     return colors[type] || colors['default'];
+}
+
+// 下载文件
+async function downloadFile(fileId, fileName, fileType) {
+    try {
+        showNotification('正在准备下载...', 'info');
+        
+        // 创建下载链接
+        const downloadUrl = `${API_BASE_URL}/api/files/${fileId}?download=true`;
+        
+        // 使用 authFetch 来处理认证
+        const response = await authFetch(downloadUrl);
+        
+        if (response.ok) {
+            // 获取文件名
+            let downloadFileName = fileName;
+            
+            // 如果是文本类型且没有.txt后缀，添加一个
+            if (fileType === 'text' && !downloadFileName.endsWith('.txt')) {
+                downloadFileName += '.txt';
+            }
+            
+            // 创建 Blob 对象
+            const blob = await response.blob();
+            
+            // 创建下载链接
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = downloadFileName;
+            document.body.appendChild(a);
+            a.click();
+            
+            // 清理
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            
+            showNotification('文件下载成功', 'success');
+        } else {
+            const errorData = await response.json();
+            showNotification(`下载失败: ${errorData.error || '未知错误'}`, 'error');
+        }
+    } catch (error) {
+        console.error('Download file error:', error);
+        showNotification('下载文件时发生错误', 'error');
+    }
 }
 
 // 删除文件
