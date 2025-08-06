@@ -2,32 +2,37 @@ name = "ai-gateway"
 main = "worker.js"
 compatibility_date = "2024-01-01"
 
+# 兼容性标志
+compatibility_flags = ["nodejs_compat"]
+
+# Production 环境配置
+[env.production]
+# 自定义域名配置
+routes = [
+  { pattern = "ai-gateway.easyapi.me/*", zone_name = "easyapi.me" }
+]
+
 # KV 存储绑定
-[[kv_namespaces]]
+[[env.production.kv_namespaces]]
 binding = "AI_KV"
 id = "5d41a451ec284a21816b8d096b090e71"
 
 # D1 数据库绑定
-[[d1_databases]]
+[[env.production.d1_databases]]
 binding = "AI_DB"
 database_name = "ai-gateway-db"
 database_id = "04dbf4e0-a32d-4802-b493-8301a9a72a94"
 
 # R2 存储绑定
-[[r2_buckets]]
+[[env.production.r2_buckets]]
 binding = "AI_R2"
 bucket_name = "ai-gateway-files"
 
-# 环境变量 (可选)
-[vars]
+# 环境变量
+[env.production.vars]
 ENVIRONMENT = "production"
-HTTP_PROXY = "http://127.0.0.1:7897"
-HTTPS_PROXY = "http://127.0.0.1:7897"
-
-# 兼容性标志
-compatibility_flags = ["nodejs_compat"]
 
 # 定时任务（Cron Triggers）
-[triggers]
+[env.production.triggers]
 crons = ["0 */6 * * *"]  # 每6小时执行一次Notion同步
 

@@ -125,6 +125,9 @@ async function handleRequest(request, env) {
         if (path === "/api/ai-model-config") {
             return handleAiModelConfig(request, env, corsHeaders);
         }
+        if (path === "/api/model-file-bindings") {
+            return handleModelFileBindings(request, env, corsHeaders);
+        }
         if (path === "/api/statistics") {
             return handleStatistics(request, env, corsHeaders);
         }
@@ -137,6 +140,22 @@ async function handleRequest(request, env) {
         if (path === "/v1/models") {
             return handleV1Models(request, env, corsHeaders);
         }
+        
+        // 处理静态文件请求
+        if (path === "/" || path === "/index.html") {
+            const html = await getIndexHtml();
+            return new Response(html, {
+                headers: { ...corsHeaders, "Content-Type": "text/html" }
+            });
+        }
+        
+        if (path === "/app.js") {
+            const js = await getAppJs();
+            return new Response(js, {
+                headers: { ...corsHeaders, "Content-Type": "application/javascript" }
+            });
+        }
+        
         return new Response("API Not Found", { status: 404, headers: corsHeaders });
     } catch (error) {
         console.error("Error:", error);
@@ -1032,6 +1051,95 @@ async function handleAiModelConfig(request, env, corsHeaders) {
     return new Response("Method not allowed", { status: 405, headers });
 }
 __name(handleAiModelConfig, "handleAiModelConfig");
+async function handleModelFileBindings(request, env, corsHeaders) {
+    const headers = { ...corsHeaders, "Content-Type": "application/json" };
+    if (!await verifyAdmin(request, env)) {
+        return new Response(JSON.stringify({ error: "未授权" }), {
+            status: 401,
+            headers
+        });
+    }
+    
+    if (request.method === "GET") {
+        const url = new URL(request.url);
+        const modelName = url.searchParams.get("model");
+        
+        let query = `
+            SELECT 
+                mfb.id,
+                mfb.model_name,
+                mfb.file_id,
+                mfb.created_at,
+                f.name as file_name,
+                f.type as file_type
+            FROM model_file_bindings mfb
+            LEFT JOIN files f ON mfb.file_id = f.id
+        `;
+        
+        const bindings = [];
+        
+        if (modelName) {
+            // 获取特定模型的文件绑定
+            query += " WHERE mfb.model_name = ? ORDER BY mfb.created_at DESC";
+            const result = await env.AI_DB.prepare(query).bind(modelName).all();
+            bindings.push(...result.results);
+        } else {
+            // 获取所有绑定关系
+            query += " ORDER BY mfb.created_at DESC";
+            const result = await env.AI_DB.prepare(query).all();
+            bindings.push(...result.results);
+        }
+        
+        return new Response(JSON.stringify({ bindings }), { headers });
+    }
+    
+    if (request.method === "POST") {
+        const data = await request.json();
+        const { modelName, fileIds } = data;
+        
+        if (!modelName || !fileIds || !Array.isArray(fileIds)) {
+            return new Response(JSON.stringify({ error: "模型名称和文件ID数组不能为空" }), {
+                status: 400,
+                headers
+            });
+        }
+        
+        // 先删除该模型的所有现有绑定
+        await env.AI_DB.prepare("DELETE FROM model_file_bindings WHERE model_name = ?").bind(modelName).run();
+        
+        // 创建新的绑定关系
+        for (const fileId of fileIds) {
+            const bindingId = nanoid();
+            await env.AI_DB.prepare(`
+                INSERT INTO model_file_bindings (id, model_name, file_id, created_at)
+                VALUES (?, ?, ?, datetime('now'))
+            `).bind(bindingId, modelName, fileId).run();
+        }
+        
+        return new Response(JSON.stringify({ success: true, bindingsCount: fileIds.length }), { headers });
+    }
+    
+    if (request.method === "DELETE") {
+        const url = new URL(request.url);
+        const modelName = url.searchParams.get("model");
+        
+        if (!modelName) {
+            return new Response(JSON.stringify({ error: "模型名称不能为空" }), {
+                status: 400,
+                headers
+            });
+        }
+        
+        // 删除该模型的所有文件绑定
+        const result = await env.AI_DB.prepare("DELETE FROM model_file_bindings WHERE model_name = ?").bind(modelName).run();
+        
+        return new Response(JSON.stringify({ success: true, deletedCount: result.changes }), { headers });
+    }
+    
+    return new Response("Method not allowed", { status: 405, headers });
+}
+__name(handleModelFileBindings, "handleModelFileBindings");
+
 async function handleStatistics(request, env, corsHeaders) {
     const headers = { ...corsHeaders, "Content-Type": "application/json" };
     if (!await verifyAdmin(request, env)) {
@@ -1197,7 +1305,37 @@ async function handleModels(request, env, corsHeaders) {
     
     if (request.method === "GET") {
         const modelsData = await env.AI_KV.get("models");
-        const models = modelsData ? JSON.parse(modelsData) : [];
+        let models = modelsData ? JSON.parse(modelsData) : [];
+        
+        // 获取所有文件绑定信息
+        const bindingsQuery = `
+            SELECT 
+                model_name,
+                file_id,
+                f.name as file_name,
+                f.type as file_type
+            FROM model_file_bindings mfb
+            LEFT JOIN files f ON mfb.file_id = f.id
+            ORDER BY mfb.created_at DESC
+        `;
+        const bindingsResult = await env.AI_DB.prepare(bindingsQuery).all();
+        const bindings = bindingsResult.results;
+        
+        // 为每个模型添加文件绑定信息，但保持原有的boundModels不变
+        models = models.map(model => {
+            const modelFileBindings = bindings.filter(b => b.model_name === model.name);
+            return {
+                ...model,
+                selectedRag: model.selectedRag, // 保持原有的RAG设置，不受文件绑定影响
+                boundModels: model.boundModels || [], // 保持原有的模型绑定
+                boundFiles: modelFileBindings.map(b => ({ // 添加文件绑定信息
+                    id: b.file_id,
+                    name: b.file_name,
+                    type: b.file_type
+                }))
+            };
+        });
+        
         return new Response(JSON.stringify(models), { headers });
     }
     
@@ -1225,6 +1363,10 @@ async function handleModels(request, env, corsHeaders) {
             // Ensure each model has a selectedRag field (default to false if not provided)
             if (model.selectedRag === undefined) {
                 model.selectedRag = false;
+            }
+            // Ensure each model has a boundModels field (default to empty array if not provided)
+            if (!model.boundModels) {
+                model.boundModels = [];
             }
         }
         
@@ -1579,36 +1721,7 @@ async function handleChatCompletions(request, env, corsHeaders) {
     // Store user message for potential Notion workflow
     const userMessage = lastMessage.content;
     
-    // Check if RAG is enabled for this model
-    const isRagEnabled = modelConfig ? modelConfig.selectedRag === true : false;
-    let ragContext = null;
-    
-    if (isRagEnabled) {
-        ragContext = await performRAG(lastMessage.content, env);
-        console.log("🤖 RAG上下文结果:", ragContext ? `获取到${ragContext.length}字符` : "无结果");
-        if (ragContext) {
-            console.log("📝 RAG上下文内容预览:", ragContext.substring(0, 200) + (ragContext.length > 200 ? "..." : ""));
-            const contextMessage = {
-                role: "system",
-                content: `\u76F8\u5173\u53C2\u8003\u4FE1\u606F\uFF1A
-${ragContext}`
-            };
-            limitedMessages.unshift(contextMessage);
-            console.log("✅ RAG上下文已添加到消息中");
-        } else {
-            console.log("❌ 未获取到RAG上下文，将不使用知识库信息");
-        }
-    } else {
-        console.log("🚫 此模型未启用RAG功能");
-    }
-    const systemPrompt = modelSystemPrompt || systemConfig.systemPrompt;
-    if (systemPrompt) {
-        limitedMessages.unshift({
-            role: "system",
-            content: systemPrompt
-        });
-    }
-    const aiConfigData = await env.AI_KV.get("AI_CONFIG");
+        const aiConfigData = await env.AI_KV.get("AI_CONFIG");
     const aiConfig = JSON.parse(aiConfigData);
     
     // 支持 API Key 轮询
@@ -1624,6 +1737,42 @@ ${ragContext}`
     let aiModel = aiConfig.model;
     if (modelConfig && modelConfig.boundModels && modelConfig.boundModels.length > 0) {
         aiModel = modelConfig.boundModels[0]; // 使用第一个绑定的模型
+    }
+    
+    // Check if RAG is enabled for this model
+    const isRagEnabled = modelConfig ? modelConfig.selectedRag === true : false;
+    let ragContext = null;
+    
+    if (isRagEnabled) {
+        console.log("🚀 开始RAG检索 - 用户模型:", requestModel, "AI模型:", aiModel, "查询内容:", lastMessage.content.substring(0, 50));
+        ragContext = await performRAG(lastMessage.content, env, requestModel);
+        console.log("🤖 RAG上下文结果:", ragContext ? `获取到${ragContext.length}字符` : "无结果");
+        if (ragContext) {
+            console.log("📝 RAG返回的实际内容预览:", ragContext.substring(0, 100));
+        }
+        if (ragContext) {
+            console.log("📝 RAG上下文内容预览:", ragContext.substring(0, 200) + (ragContext.length > 200 ? "..." : ""));
+            const contextMessage = {
+                role: "system",
+                content: `\u76F8\u5173\u53C2\u8003\u4FE1\u606F\uFF1A
+${ragContext}`
+            };
+            limitedMessages.unshift(contextMessage);
+            console.log("✅ RAG上下文已添加到消息中");
+        } else {
+            console.log("❌ 未获取到RAG上下文，将不使用知识库信息");
+        }
+    } else {
+        console.log("🚫 此模型未启用RAG功能");
+    }
+    
+    // Add system prompt after RAG context
+    const systemPrompt = modelSystemPrompt || systemConfig.systemPrompt;
+    if (systemPrompt) {
+        limitedMessages.unshift({
+            role: "system",
+            content: systemPrompt
+        });
     }
     
     try {
@@ -1850,20 +1999,45 @@ async function handleImageGeneration(prompt, env, stream, headers) {
     }
 }
 __name(handleImageGeneration, "handleImageGeneration");
-async function performRAG(query, env) {
+async function performRAG(query, env, modelName = null) {
     console.log("🔍 RAG检索开始, 查询:", query);
+    console.log("🎯 模型名称参数:", modelName);
+
     try {
         const queryEmbedding = await getEmbedding(query, env);
         console.log("✅ 查询embedding生成成功, 维度:", queryEmbedding.length);
         
-        const files = await env.AI_DB.prepare(`
-      SELECT id, name, type, content, embedding
-      FROM files
-      ORDER BY created_at DESC
-      LIMIT 50
-    `).all();
+        let files;
+        
+        if (modelName && modelName.trim() !== "") {
+            // 检查该模型是否有绑定的文件
+            const boundFiles = await env.AI_DB.prepare(`
+                SELECT f.id, f.name, f.type, f.content, f.embedding
+                FROM files f
+                INNER JOIN model_file_bindings mfb ON f.id = mfb.file_id
+                WHERE mfb.model_name = ?
+                ORDER BY f.created_at DESC
+                LIMIT 50
+            `).bind(modelName.trim()).all();
+            
+            console.log(`🔗 模型 ${modelName} 绑定的文件数量:`, boundFiles.results.length);
+            console.log(`🔗 模型 ${modelName} 绑定的文件详情:`, boundFiles.results.map(f => ({ id: f.id, name: f.name, type: f.type })));
+            
+            if (boundFiles.results.length > 0) {
+                files = boundFiles;
+            } else {
+                console.log(`🔗 模型 ${modelName} 没有绑定文件，跳过RAG检索`);
+                // 如果没有绑定文件，则不进行RAG检索
+                return null;
+            }
+        } else {
+            console.log(`❌ 模型名称为空或无效，跳过RAG检索`);
+            // 如果没有指定模型名称或模型名称无效，则不进行RAG检索
+            return null;
+        }
         
         console.log("📁 数据库文件数量:", files.results.length);
+        console.log("📋 检索的文件列表:", files.results.map(f => f.name));
         if (!files.results.length) {
             console.log("❌ 数据库中没有文件");
             return null;
@@ -1923,6 +2097,22 @@ async function performRAG(query, env) {
             });
             const rerankedDocs = await rerank(query, docsWithContent.map((doc) => doc.content), env);
             console.log("🎯 RAG检索完成, 返回内容长度:", rerankedDocs.slice(0, 2).join("\n\n").length);
+            
+            // 额外验证：确认返回的文档确实绑定到当前模型
+            if (modelName) {
+                const usedFileIds = lowThresholdDocs.map(doc => doc.id);
+                const verification = await env.AI_DB.prepare(`
+                    SELECT COUNT(*) as count FROM model_file_bindings 
+                    WHERE model_name = ? AND file_id IN (${usedFileIds.map(() => '?').join(',')})
+                `).bind(modelName, ...usedFileIds).first();
+                
+                if (verification.count !== usedFileIds.length) {
+                    console.log("❌ 验证失败：返回的文档不完全属于当前模型，拒绝返回RAG内容");
+                    return null;
+                }
+                console.log("✅ 验证通过：返回的文档确实属于当前模型");
+            }
+            
             return rerankedDocs.slice(0, 2).join("\n\n");
         }
         
@@ -1940,6 +2130,22 @@ async function performRAG(query, env) {
         });
         const rerankedDocs = await rerank(query, topDocsWithContent.map((doc) => doc.content), env);
         console.log("🎯 RAG检索完成, 返回内容长度:", rerankedDocs.slice(0, 2).join("\n\n").length);
+        
+        // 额外验证：确认返回的文档确实绑定到当前模型
+        if (modelName) {
+            const usedFileIds = topDocs.map(doc => doc.id);
+            const verification = await env.AI_DB.prepare(`
+                SELECT COUNT(*) as count FROM model_file_bindings 
+                WHERE model_name = ? AND file_id IN (${usedFileIds.map(() => '?').join(',')})
+            `).bind(modelName, ...usedFileIds).first();
+            
+            if (verification.count !== usedFileIds.length) {
+                console.log("❌ 验证失败：返回的文档不完全属于当前模型，拒绝返回RAG内容");
+                return null;
+            }
+            console.log("✅ 验证通过：返回的文档确实属于当前模型");
+        }
+        
         return rerankedDocs.slice(0, 2).join("\n\n");
     } catch (error) {
         console.error("❌ RAG检索错误:", error);
@@ -3686,8 +3892,49 @@ async function handleTestDbInsert(request, env, corsHeaders) {
     }
 }
 
+// 获取HTML文件内容
+async function getIndexHtml() {
+    return `<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Gateway</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    <style>
+        * { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+        body { background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); min-height: 100vh; }
+        .hidden { display: none !important; }
+        .notification { position: fixed; top: 20px; right: 20px; padding: 16px 20px; border-radius: 12px; color: white !important; font-weight: 500; z-index: 1000; transform: translateX(400px); transition: transform 0.3s ease; min-width: 200px; max-width: 400px; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2); background: #6b7280 !important; }
+        .notification.show { transform: translateX(0); }
+        .notification.success { background: #10b981 !important; }
+        .notification.error { background: #ef4444 !important; }
+        .notification.warning { background: #f59e0b !important; }
+        .notification.info { background: #3b82f6 !important; }
+    </style>
+</head>
+<body>
+    <div id="loading" class="fixed inset-0 bg-white flex items-center justify-center z-50">
+        <div class="text-center">
+            <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
+            <p class="text-gray-600 font-medium">正在加载中...</p>
+        </div>
+    </div>
+    <div id="notification" class="notification"></div>
+    <script src="app.js"></script>
+    <script>lucide.createIcons();</script>
+</body>
+</html>`;
+}
+
+// 获取JS文件内容（简化版，实际应该读取完整的app.js）
+async function getAppJs() {
+    return 'console.log("App.js loaded - Placeholder");';
+}
+
 export {
     worker_default as default,
     scheduled
 };
-//# sourceMappingURL=worker.js.map

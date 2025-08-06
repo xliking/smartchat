@@ -728,6 +728,9 @@ function updateAIConfigModelDisplay(selectedModels) {
             modelTags.innerHTML = selectedModels.map(model => 
                 `<span class="inline-flex items-center px-2 py-1 text-xs font-medium bg-indigo-100 text-indigo-800 rounded-full">
                     ${model}
+                    <button type="button" class="ml-1 text-indigo-600 hover:text-indigo-800" onclick="bindModelFiles('${model}')" title="绑定文件">
+                        <i data-lucide="paperclip" class="w-3 h-3"></i>
+                    </button>
                     <button type="button" class="ml-1 text-indigo-600 hover:text-indigo-800" onclick="removeSelectedModel('${model}')" title="删除此模型">
                         <i data-lucide="x" class="w-3 h-3"></i>
                     </button>
@@ -896,6 +899,26 @@ async function clearAllSelectedModels() {
         });
         
         if (response.ok) {
+            // 删除所有模型的文件绑定关系
+            try {
+                // 获取所有已选择的模型，然后逐个删除绑定关系
+                const configResponse = await fetch(`${API_BASE_URL}/api/ai-model-config`, {
+                    headers: { 'Authorization': 'Bearer ' + authToken }
+                });
+                if (configResponse.ok) {
+                    const config = await configResponse.json();
+                    const models = config.selectedModels || [];
+                    for (const model of models) {
+                        await fetch(`${API_BASE_URL}/api/model-file-bindings?model=${encodeURIComponent(model)}`, {
+                            method: 'DELETE',
+                            headers: { 'Authorization': 'Bearer ' + authToken }
+                        });
+                    }
+                }
+            } catch (error) {
+                console.log('删除所有模型文件绑定关系失败:', error);
+            }
+            
             updateAIConfigModelDisplay([]);
             showNotification('已清空所有选中的模型', 'success');
         } else {
@@ -904,6 +927,114 @@ async function clearAllSelectedModels() {
     } catch (error) {
         console.error('Clear models error:', error);
         showNotification('清空模型时发生错误', 'error');
+    }
+}
+
+// 绑定模型文件
+async function bindModelFiles(modelName) {
+    try {
+        // 获取所有文件
+        const filesResponse = await authFetch(`${API_BASE_URL}/api/files`);
+        if (!filesResponse.ok) {
+            showNotification('获取文件列表失败', 'error');
+            return;
+        }
+        
+        const filesData = await filesResponse.json();
+        const files = filesData.files || filesData;
+        
+        // 获取该模型已绑定的文件
+        const bindingsResponse = await authFetch(`${API_BASE_URL}/api/model-file-bindings?model=${encodeURIComponent(modelName)}`);
+        let boundFileIds = [];
+        
+        if (bindingsResponse.ok) {
+            const bindingsData = await bindingsResponse.json();
+            boundFileIds = bindingsData.bindings?.map(binding => binding.file_id) || [];
+        }
+        
+        // 创建文件选择复选框列表
+        const fileOptions = files.map(file => {
+            const isBound = boundFileIds.includes(file.id);
+            return `<label class="flex items-center p-2 hover:bg-gray-50 rounded ${isBound ? 'bg-blue-50' : ''}">
+                <input type="checkbox" class="file-select-checkbox mr-2 rounded text-blue-600" data-file-id="${file.id}" ${isBound ? 'checked' : ''}>
+                <div class="flex-1">
+                    <div class="font-medium text-sm">${file.name}</div>
+                    <div class="text-xs text-gray-500">${file.type} • ${file.created_at ? new Date(file.created_at).toLocaleDateString() : ''}</div>
+                </div>
+                ${isBound ? '<span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">已绑定</span>' : ''}
+            </label>`;
+        }).join('');
+        
+        showModal(`为模型 "${modelName}" 绑定文件`, `
+            <div class="space-y-4">
+                <div class="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                    <div class="flex items-center">
+                        <i data-lucide="info" class="w-4 h-4 text-blue-600 mr-2"></i>
+                        <p class="text-sm text-blue-800">
+                            选择该模型可以使用的文件。如果开启了RAG功能，将只从选定的文件中检索内容。
+                        </p>
+                    </div>
+                </div>
+                
+                <div class="flex items-center justify-between">
+                    <p class="text-gray-600">从 ${files.length} 个文件中选择：</p>
+                    <div class="flex items-center space-x-2">
+                        <input type="checkbox" id="select-all-files" class="mr-2 rounded text-blue-600">
+                        <label for="select-all-files" class="text-sm text-gray-600">全选</label>
+                    </div>
+                </div>
+                
+                <div class="max-h-64 overflow-y-auto border border-gray-200 rounded-lg p-3">
+                    ${fileOptions || '<p class="text-gray-500 text-center py-4">暂无文件</p>'}
+                </div>
+                
+                <div class="text-xs text-gray-500">
+                    <p>• 如果不选择任何文件，将使用所有文件进行RAG检索</p>
+                    <p>• 文件绑定关系将影响该模型的RAG检索范围</p>
+                </div>
+            </div>
+        `, async () => {
+            const selectedFileIds = Array.from(document.querySelectorAll('.file-select-checkbox:checked'))
+                .map(checkbox => checkbox.dataset.fileId);
+            
+            // 保存绑定关系
+            const saveResponse = await authFetch(`${API_BASE_URL}/api/model-file-bindings`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    modelName: modelName,
+                    fileIds: selectedFileIds
+                })
+            });
+            
+            if (saveResponse.ok) {
+                showNotification(`已为模型 "${modelName}" 绑定 ${selectedFileIds.length} 个文件`, 'success');
+                return true;
+            } else {
+                showNotification('保存文件绑定失败', 'error');
+                return false;
+            }
+        }, { width: '3xl' });
+        
+        // 全选功能
+        const selectAllCheckbox = document.getElementById('select-all-files');
+        if (selectAllCheckbox) {
+            selectAllCheckbox.addEventListener('change', function() {
+                const checkboxes = document.querySelectorAll('.file-select-checkbox');
+                checkboxes.forEach(checkbox => {
+                    checkbox.checked = this.checked;
+                });
+            });
+        }
+        
+        // 重新初始化图标
+        lucide.createIcons();
+        
+    } catch (error) {
+        console.error('Bind model files error:', error);
+        showNotification('绑定文件时发生错误', 'error');
     }
 }
 
@@ -934,6 +1065,16 @@ async function removeSelectedModel(modelToRemove) {
             });
             
             if (saveResponse.ok) {
+                // 删除该模型的文件绑定关系
+                try {
+                    await fetch(`${API_BASE_URL}/api/model-file-bindings?model=${encodeURIComponent(modelToRemove)}`, {
+                        method: 'DELETE',
+                        headers: { 'Authorization': 'Bearer ' + authToken }
+                    });
+                } catch (error) {
+                    console.log('删除模型文件绑定关系失败:', error);
+                }
+                
                 updateAIConfigModelDisplay(updatedModels);
                 showNotification(`已移除模型 "${modelToRemove}"`, 'success');
             } else {
@@ -1857,6 +1998,24 @@ async function renderModels() {
             `;
         }
         
+        // 显示绑定的文件
+        let boundFilesHtml = '';
+        if (model.boundFiles && model.boundFiles.length > 0) {
+            boundFilesHtml = `
+                <div class="bg-green-50 rounded-xl p-3 mt-3">
+                    <h4 class="text-sm font-semibold text-gray-700 mb-2">绑定的文件</h4>
+                    <div class="max-h-32 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                        ${model.boundFiles.map(boundFile => 
+                            `<div class="text-sm py-1 px-2 bg-white border border-gray-200 rounded mb-1 last:mb-0 flex items-center justify-between">
+                                <span>${boundFile.name}</span>
+                                <span class="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded-full">${boundFile.type}</span>
+                            </div>`
+                        ).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        
         const div = document.createElement('div');
         div.className = 'glass-card card-hover rounded-2xl p-6';
         
@@ -1885,6 +2044,7 @@ async function renderModels() {
                 <p class="text-sm text-gray-600 leading-relaxed">${model.systemPrompt || '<span class="text-gray-400">未设置系统提示词</span>'}</p>
             </div>
             ${boundModelsHtml}
+            ${boundFilesHtml}
             <div class="flex items-center justify-between bg-blue-50 rounded-xl p-4 mt-3">
                 <div class="flex items-center">
                     <input type="checkbox" id="rag-${index}" class="mr-2 rounded text-indigo-600" ${model.selectedRag ? 'checked' : ''} onchange="toggleRag(${index})">
@@ -1987,10 +2147,172 @@ async function clearModelBindings() {
 
 // 切换RAG功能
 async function toggleRag(index) {
-    models[index].selectedRag = !models[index].selectedRag;
-    saveModels();
+    console.log('toggleRag called with index:', index);
+    const model = models[index];
+    const wasEnabled = model.selectedRag;
+    
+    console.log('Model:', model.name, 'Current RAG status:', wasEnabled);
+    
+    // 如果是启用RAG，直接弹出文件选择界面
+    if (!wasEnabled) {
+        console.log('Enabling RAG for model:', model.name);
+        const shouldSelectFiles = await showFileSelectionDialog(model.name);
+        if (shouldSelectFiles === false) {
+            // 用户取消了文件选择，不启用RAG
+            console.log('User cancelled file selection, not enabling RAG');
+            return;
+        }
+        model.selectedRag = true;
+    } else {
+        // 禁用RAG
+        console.log('Disabling RAG for model:', model.name);
+        model.selectedRag = false;
+        
+        // 清除数据库中的文件绑定关系
+        try {
+            const response = await authFetch(`${API_BASE_URL}/api/model-file-bindings`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    modelName: model.name,
+                    fileIds: [] // 空数组表示清除所有绑定
+                })
+            });
+            
+            if (response.ok) {
+                console.log('Cleared file bindings for model:', model.name);
+                // 清除前端的boundFiles显示
+                model.boundFiles = [];
+            } else {
+                console.error('Failed to clear file bindings');
+            }
+        } catch (error) {
+            console.error('Error clearing file bindings:', error);
+        }
+    }
+    
+    console.log('Saving models, new RAG status:', model.selectedRag);
+    await saveModels();
+    
+    // 重新获取模型数据以确保同步
+    await loadModels();
     await renderModels();
-    showNotification(`模型 "${models[index].name}" 的RAG功能已${models[index].selectedRag ? '启用' : '禁用'}`, 'success');
+    showNotification(`模型 "${model.name}" 的RAG功能已${model.selectedRag ? '启用' : '禁用'}`, 'success');
+}
+
+// 显示文件选择对话框
+async function showFileSelectionDialog(modelName) {
+    console.log('showFileSelectionDialog called for model:', modelName);
+    return new Promise((resolve) => {
+        // 获取所有文件
+        authFetch(`${API_BASE_URL}/api/files`)
+            .then(response => {
+                if (!response.ok) {
+                    showNotification('获取文件列表失败', 'error');
+                    resolve(false);
+                    return;
+                }
+                return response.json();
+            })
+            .then(data => {
+                const files = data.files || [];
+                
+                // 生成文件选项HTML
+                let fileOptions = '';
+                if (files.length > 0) {
+                    fileOptions = `
+                        <div class="mb-3">
+                            <label class="flex items-center">
+                                <input type="checkbox" id="select-all-files" class="mr-2 rounded text-indigo-600">
+                                <span class="text-sm font-medium text-gray-700">全选/取消全选</span>
+                            </label>
+                        </div>
+                        <div class="space-y-2 max-h-48 overflow-y-auto">
+                            ${files.map(file => `
+                                <label class="flex items-center p-2 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer">
+                                    <input type="checkbox" 
+                                           class="file-select-checkbox mr-3 rounded text-indigo-600" 
+                                           data-file-id="${file.id}">
+                                    <div class="flex-1">
+                                        <div class="text-sm font-medium text-gray-900">${file.name}</div>
+                                        <div class="text-xs text-gray-500">${file.type} • ${new Date(file.created_at).toLocaleDateString()}</div>
+                                    </div>
+                                </label>
+                            `).join('')}
+                        </div>
+                    `;
+                }
+                
+                // 显示模态框
+                showModal(`为模型 "${modelName}" 选择文件`, `
+                    <div class="text-center">
+                        <div class="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <i data-lucide="paperclip" class="w-6 h-6 text-indigo-600"></i>
+                        </div>
+                        <h3 class="text-lg font-semibold text-gray-900 mb-2">选择文件</h3>
+                        <p class="text-sm text-gray-600 mb-4">选择要用于RAG检索的文件，如果不选择任何文件，将使用所有文件进行检索</p>
+                    </div>
+                    
+                    <div class="max-h-64 overflow-y-auto border border-gray-200 rounded-lg p-3">
+                        ${fileOptions || '<p class="text-gray-500 text-center py-4">暂无文件</p>'}
+                    </div>
+                    
+                    <div class="text-xs text-gray-500">
+                        <p>• 如果不选择任何文件，将使用所有文件进行RAG检索</p>
+                        <p>• 文件绑定关系将影响该模型的RAG检索范围</p>
+                    </div>
+                `, async () => {
+                    const selectedFileIds = Array.from(document.querySelectorAll('.file-select-checkbox:checked'))
+                        .map(checkbox => checkbox.dataset.fileId);
+                    
+                    // 保存绑定关系
+                    const saveResponse = await authFetch(`${API_BASE_URL}/api/model-file-bindings`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            modelName: modelName,
+                            fileIds: selectedFileIds
+                        })
+                    });
+                    
+                    if (saveResponse.ok) {
+                        showNotification(`已为模型 "${modelName}" 绑定 ${selectedFileIds.length} 个文件`, 'success');
+                        resolve(true);
+                    } else {
+                        showNotification('保存文件绑定失败', 'error');
+                        resolve(false);
+                    }
+                }, { 
+                    width: '3xl',
+                    onCancel: () => {
+                        resolve(false);
+                    }
+                });
+                
+                // 全选功能
+                const selectAllCheckbox = document.getElementById('select-all-files');
+                if (selectAllCheckbox) {
+                    selectAllCheckbox.addEventListener('change', function() {
+                        const checkboxes = document.querySelectorAll('.file-select-checkbox');
+                        checkboxes.forEach(checkbox => {
+                            checkbox.checked = this.checked;
+                        });
+                    });
+                }
+                
+                // 重新初始化图标
+                lucide.createIcons();
+            })
+            .catch(error => {
+                console.error('Show file selection dialog error:', error);
+                showNotification('显示文件选择界面失败', 'error');
+                resolve(false);
+            });
+    });
 }
 
 // 初始化模型管理事件
@@ -2255,14 +2577,48 @@ async function addModel() {
         const newModel = { 
             name, 
             systemPrompt, 
-            selectedRag,
+            selectedRag: false, // 先设为false，等用户选择文件后再启用
             boundModels: boundModel // 保存绑定的模型（单选）
         };
         
-        models.push(newModel);
-        saveModels();
-        await renderModels();
-        showNotification('模型添加成功', 'success');
+        // 如果启用了RAG，需要选择文件
+        if (selectedRag) {
+            // 先保存模型，然后再处理文件选择
+            models.push(newModel);
+            await saveModels();
+            
+            // 弹出文件选择对话框
+            const shouldSelectFiles = await showFileSelectionDialog(name);
+            if (shouldSelectFiles === false) {
+                // 用户取消了文件选择，不启用RAG
+                // 找到刚添加的模型并更新
+                const addedModel = models.find(m => m.name === name);
+                if (addedModel) {
+                    addedModel.selectedRag = false;
+                }
+                await saveModels();
+                await loadModels();
+                await renderModels();
+                showNotification('模型添加成功，但未启用RAG', 'success');
+            } else {
+                // 用户选择了文件，启用RAG
+                // 找到刚添加的模型并更新
+                const addedModel = models.find(m => m.name === name);
+                if (addedModel) {
+                    addedModel.selectedRag = true;
+                }
+                await saveModels();
+                await loadModels();
+                await renderModels();
+                showNotification('模型添加成功，RAG已启用', 'success');
+            }
+        } else {
+            // 没有启用RAG，直接保存
+            models.push(newModel);
+            await saveModels();
+            await renderModels();
+            showNotification('模型添加成功', 'success');
+        }
         
         // 自动关闭模态框
         hideModal();
@@ -2362,11 +2718,12 @@ async function editModel(index) {
             name, 
             systemPrompt, 
             selectedRag,
-            boundModels: boundModel // 保存绑定的模型（单选）
+            boundModels: boundModel, // 保存绑定的模型（单选）
+            boundFiles: model.boundFiles || [] // 保留原有的文件绑定
         };
         
         saveModels();
-        await renderModels();
+        await loadModels(); // 重新从后端获取数据确保同步
         showNotification('模型更新成功', 'success');
         
         // 自动关闭模态框
@@ -2394,7 +2751,7 @@ async function deleteModel(index) {
         </div>
     `, async () => {
         models.splice(index, 1);
-        saveModels();
+        await saveModels(true); // 跳过重新加载，直接保存
         await renderModels();
         showNotification('模型删除成功', 'success');
         return true;
@@ -2425,13 +2782,10 @@ async function saveModels(skipValidation = false) {
             }
         }
         
-        // 检查是否有模型被勾选（至少需要一个模型被绑定）
-        if (!skipValidation) {
-            const hasSelectedModels = models.some(model => model.boundModels && model.boundModels.length > 0);
-            if (!hasSelectedModels) {
-                showNotification('请至少勾选一个模型进行绑定后再保存', 'error');
-                return;
-            }
+        // 检查是否有模型（至少需要一个模型）
+        if (!skipValidation && models.length === 0) {
+            showNotification('请至少添加一个模型', 'error');
+            return;
         }
         
         const response = await fetch(`${API_BASE_URL}/api/models`, {
@@ -2444,8 +2798,10 @@ async function saveModels(skipValidation = false) {
         });
 
         if (response.ok) {
-            // 保存成功后重新加载模型数据以保持同步
-            await loadModels();
+            // 保存成功后重新加载模型数据以保持同步（除非跳过）
+            if (!skipValidation) {
+                await loadModels();
+            }
             showNotification('模型配置保存成功', 'success');
         } else {
             const error = await response.json();
@@ -2458,16 +2814,26 @@ async function saveModels(skipValidation = false) {
 
 // 模态框管理
 let currentModalCallback = null;
+let currentModalCancelCallback = null;
 
 function showModal(title, content, onConfirm, options = {}) {
+    console.log('showModal called with title:', title);
     const overlay = document.getElementById('modal-overlay');
     const modalContent = document.getElementById('modal-content');
     const titleEl = document.getElementById('modal-title');
     const bodyEl = document.getElementById('modal-body');
     
+    console.log('Modal elements found:', {
+        overlay: !!overlay,
+        modalContent: !!modalContent,
+        titleEl: !!titleEl,
+        bodyEl: !!bodyEl
+    });
+    
     titleEl.textContent = title;
     bodyEl.innerHTML = content;
     currentModalCallback = onConfirm;
+    currentModalCancelCallback = options.onCancel || null;
     
     // 应用自定义选项
     if (options.width) {
@@ -2493,7 +2859,14 @@ function hideModal() {
     setTimeout(() => {
         overlay.classList.add('hidden');
         overlay.classList.remove('modal-leaving');
+        
+        // 调用取消回调
+        if (currentModalCancelCallback) {
+            currentModalCancelCallback();
+        }
+        
         currentModalCallback = null;
+        currentModalCancelCallback = null;
         // 重置模态框宽度为默认值
         modalContent.className = modalContent.className.replace(/max-w-\w+/, 'max-w-md');
     }, 300);

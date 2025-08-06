@@ -6,4 +6,4 @@ pages_build_output_dir = "."
 
 # 环境变量
 [vars]
-API_BASE_URL = "https://ai-gateway.2190418744.workers.dev"
+VITE_API_BASE_URL = "https://ai-gateway.easyapi.me"

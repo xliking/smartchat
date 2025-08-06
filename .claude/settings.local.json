@@ -31,7 +31,10 @@
       "Bash(node:*)",
       "Bash(cat:*)",
       "Bash(wrangler d1 execute:*)",
-      "Bash(wrangler:*)"
+      "Bash(wrangler:*)",
+      "Bash(dir:*)",
+      "Bash(pkill:*)",
+      "Bash(start /b npm run dev)"
     ],
     "deny": []
   }

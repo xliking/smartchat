@@ -48,6 +48,20 @@ CREATE INDEX IF NOT EXISTS idx_usage_api_key ON api_usage(api_key);
 CREATE INDEX IF NOT EXISTS idx_usage_created ON api_usage(created_at);
 CREATE INDEX IF NOT EXISTS idx_usage_endpoint ON api_usage(endpoint);
 
+-- 模型与文件绑定关系表 - 存储模型与文件的绑定关系
+CREATE TABLE IF NOT EXISTS model_file_bindings (
+    id TEXT PRIMARY KEY,                -- 绑定关系唯一标识 (UUID)
+    model_name TEXT NOT NULL,           -- 模型名称
+    file_id TEXT NOT NULL,              -- 文件ID
+    created_at TEXT NOT NULL,           -- 创建时间 (ISO 8601格式)
+    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+);
+
+-- 绑定关系表索引 - 优化查询性能
+CREATE INDEX IF NOT EXISTS idx_bindings_model ON model_file_bindings(model_name);
+CREATE INDEX IF NOT EXISTS idx_bindings_file ON model_file_bindings(file_id);
+CREATE INDEX IF NOT EXISTS idx_bindings_created ON model_file_bindings(created_at);
+
 -- =============================================================================
 -- 数据完整性检查和默认数据（可选）
 -- =============================================================================
