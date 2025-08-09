@@ -131,6 +131,9 @@ async function handleRequest(request, env) {
         if (path === "/api/statistics") {
             return handleStatistics(request, env, corsHeaders);
         }
+        if (path === "/api/memo") {
+            return handleMemo(request, env, corsHeaders);
+        }
         if (path.startsWith("/api/notion/")) {
             return handleNotion(request, env, corsHeaders, path);
         }
@@ -1223,6 +1226,35 @@ async function handleStatistics(request, env, corsHeaders) {
     return new Response("Method not allowed", { status: 405, headers });
 }
 __name(handleStatistics, "handleStatistics");
+
+// 备忘录处理函数
+async function handleMemo(request, env, corsHeaders) {
+    const headers = { ...corsHeaders, "Content-Type": "application/json" };
+    if (!await verifyAdmin(request, env)) {
+        return new Response(JSON.stringify({ error: "未授权" }), {
+            status: 401,
+            headers
+        });
+    }
+    
+    if (request.method === "GET") {
+        // 获取备忘录内容
+        const memoData = await env.AI_KV.get("SYSTEM_MEMO");
+        const memo = memoData || '';
+        return new Response(JSON.stringify({ content: memo }), { headers });
+    }
+    
+    if (request.method === "POST") {
+        // 保存备忘录内容
+        const { content } = await request.json();
+        await env.AI_KV.put("SYSTEM_MEMO", content || '');
+        return new Response(JSON.stringify({ success: true }), { headers });
+    }
+    
+    return new Response("Method not allowed", { status: 405, headers });
+}
+__name(handleMemo, "handleMemo");
+
 async function handleFetchModels(request, env, corsHeaders) {
     const headers = { ...corsHeaders, "Content-Type": "application/json" };
     if (!await verifyAdmin(request, env)) {
@@ -1307,7 +1339,7 @@ async function handleModels(request, env, corsHeaders) {
         const modelsData = await env.AI_KV.get("models");
         let models = modelsData ? JSON.parse(modelsData) : [];
         
-        // 获取所有文件绑定信息
+        // 获取所有文件绑定信息 (只包含存在且有效的文件)
         const bindingsQuery = `
             SELECT 
                 model_name,
@@ -1315,9 +1347,16 @@ async function handleModels(request, env, corsHeaders) {
                 f.name as file_name,
                 f.type as file_type
             FROM model_file_bindings mfb
-            LEFT JOIN files f ON mfb.file_id = f.id
+            INNER JOIN files f ON mfb.file_id = f.id
+            WHERE f.name IS NOT NULL AND f.type IS NOT NULL
             ORDER BY mfb.created_at DESC
         `;
+        // 先清理孤立的绑定记录（指向已删除文件的绑定）
+        await env.AI_DB.prepare(`
+            DELETE FROM model_file_bindings 
+            WHERE file_id NOT IN (SELECT id FROM files WHERE name IS NOT NULL)
+        `).run();
+        
         const bindingsResult = await env.AI_DB.prepare(bindingsQuery).all();
         const bindings = bindingsResult.results;
         
@@ -1410,6 +1449,12 @@ async function handleDeleteFile(request, env, corsHeaders) {
         } catch (r2Error) {
             console.log(`⚠️ 删除 R2 文件失败: ${r2Error.message}`);
         }
+        // 先删除模型文件绑定关系
+        await env.AI_DB.prepare(`
+      DELETE FROM model_file_bindings WHERE file_id = ?
+    `).bind(fileId).run();
+        
+        // 再删除文件记录
         const deleteResult = await env.AI_DB.prepare(`
       DELETE FROM files WHERE id = ?
     `).bind(fileId).run();
@@ -2651,9 +2696,9 @@ async function handleNotionSyncAll(request, env, headers) {
                         // 检查是否已存在相同内容的页面（基于内容哈希）
                         const existingFile = await env.AI_DB.prepare(`
                             SELECT id, name, created_at FROM files 
-                            WHERE file_hash = ?
+                            WHERE name LIKE ?
                             LIMIT 1
-                        `).bind(pageHash).first();
+                        `).bind(`%[${page.id}]%`).first();
                         
                         const fileName = `Notion: [${page.id}] ${page.title}`;
                         const fileId = existingFile ? existingFile.id : crypto.randomUUID();
@@ -3129,12 +3174,12 @@ async function handleNotionSyncPage(request, env, headers) {
         // 计算页面内容的哈希值
         const pageHash = await calculateFileHash(content);
         
-        // 检查是否已存在相同内容的页面（基于内容哈希）
+        // 检查是否已存在相同页面（基于Notion页面ID）
         const existingFile = await env.AI_DB.prepare(`
             SELECT id, name, created_at FROM files 
-            WHERE file_hash = ?
+            WHERE name LIKE ?
             LIMIT 1
-        `).bind(pageHash).first();
+        `).bind(`%[${pageId}]%`).first();
         
         const fileName = `Notion: [${pageId}] ${page.title}`;
         const fileId = existingFile ? existingFile.id : crypto.randomUUID();
@@ -3305,9 +3350,9 @@ async function handleNotionSyncDatabase(request, env, headers) {
                         // 检查是否已存在相同内容的页面（基于内容哈希）
                         const existingFile = await env.AI_DB.prepare(`
                             SELECT id, name, created_at FROM files 
-                            WHERE file_hash = ?
+                            WHERE name LIKE ?
                             LIMIT 1
-                        `).bind(pageHash).first();
+                        `).bind(`%[${page.id}]%`).first();
                         
                         const fileName = `Notion DB: [${pageId}] ${title}`;
                         const fileId = existingFile ? existingFile.id : crypto.randomUUID();
@@ -3770,9 +3815,9 @@ async function scheduled(event, env, ctx) {
                         // 检查是否已存在相同内容的页面（基于内容哈希）
                         const existingFile = await env.AI_DB.prepare(`
                             SELECT id, name, created_at FROM files 
-                            WHERE file_hash = ?
+                            WHERE name LIKE ?
                             LIMIT 1
-                        `).bind(pageHash).first();
+                        `).bind(`%[${page.id}]%`).first();
                         
                         const fileName = `Notion: ${page.title}`;
                         const fileId = existingFile ? existingFile.id : crypto.randomUUID();
