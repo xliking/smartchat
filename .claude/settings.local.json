@@ -34,7 +34,8 @@
       "Bash(wrangler:*)",
       "Bash(dir:*)",
       "Bash(pkill:*)",
-      "Bash(start /b npm run dev)"
+      "Bash(start /b npm run dev)",
+      "Bash(del \"C:\\Users\\Administrator\\Desktop\\auth\\api_usage_update.sql\")"
     ],
     "deny": []
   }

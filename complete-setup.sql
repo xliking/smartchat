@@ -39,14 +39,23 @@ CREATE TABLE IF NOT EXISTS api_usage (
     id TEXT PRIMARY KEY,                -- 记录唯一标识 (UUID)
     api_key TEXT NOT NULL,              -- 用户API密钥
     endpoint TEXT NOT NULL,             -- 调用的端点路径
-    tokens_used INTEGER DEFAULT 0,     -- 使用的token数量
-    created_at TEXT NOT NULL            -- 调用时间 (ISO 8601格式)
+    tokens_used INTEGER DEFAULT 0,     -- 使用的token数量 (保留字段)
+    created_at TEXT NOT NULL,           -- 调用时间 (ISO 8601格式)
+    model TEXT DEFAULT 'unknown',       -- 使用的AI模型名称
+    request_time TEXT DEFAULT '',       -- 请求时间戳
+    input_tokens INTEGER DEFAULT 0,    -- 输入token数量
+    output_tokens INTEGER DEFAULT 0,   -- 输出token数量
+    status TEXT DEFAULT 'unknown',     -- 请求状态 (started/success/error)
+    error_message TEXT DEFAULT NULL    -- 错误信息（如果有）
 );
 
 -- 使用统计表索引
 CREATE INDEX IF NOT EXISTS idx_usage_api_key ON api_usage(api_key);
 CREATE INDEX IF NOT EXISTS idx_usage_created ON api_usage(created_at);
 CREATE INDEX IF NOT EXISTS idx_usage_endpoint ON api_usage(endpoint);
+CREATE INDEX IF NOT EXISTS idx_usage_model ON api_usage(model);
+CREATE INDEX IF NOT EXISTS idx_usage_status ON api_usage(status);
+CREATE INDEX IF NOT EXISTS idx_usage_request_time ON api_usage(request_time);
 
 -- 模型与文件绑定关系表 - 存储模型与文件的绑定关系
 CREATE TABLE IF NOT EXISTS model_file_bindings (
@@ -77,10 +86,11 @@ SELECT
     END as status
 FROM sqlite_master 
 WHERE name IN (
-    'files', 'conversations', 'api_usage',
-    'idx_files_type', 'idx_files_created', 'idx_files_name',
+    'files', 'conversations', 'api_usage', 'model_file_bindings',
+    'idx_files_type', 'idx_files_created', 'idx_files_name', 'idx_files_hash',
     'idx_conv_api_key', 'idx_conv_created',
-    'idx_usage_api_key', 'idx_usage_created', 'idx_usage_endpoint'
+    'idx_usage_api_key', 'idx_usage_created', 'idx_usage_endpoint', 'idx_usage_model', 'idx_usage_status', 'idx_usage_request_time',
+    'idx_bindings_model', 'idx_bindings_file', 'idx_bindings_created'
 )
 ORDER BY type DESC, name;
 
