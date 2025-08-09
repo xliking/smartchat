@@ -1,5 +1,5 @@
 // API 基础配置  
-let API_BASE_URL = 'https://ai-gateway.easyapi.me';
+let API_BASE_URL = 'https://youApiAddress';
 let authToken = localStorage.getItem('authToken');
 let isInitialized = false;
 
