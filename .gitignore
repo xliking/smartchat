@@ -1,2 +1,5 @@
 /node_modules/
-/.wrangler/tmp/
+/.wrangler/
+/.claude/
+CLAUDE.md
+cloudflare-资源ID.txt

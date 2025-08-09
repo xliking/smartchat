@@ -71,28 +71,6 @@ CREATE INDEX IF NOT EXISTS idx_bindings_model ON model_file_bindings(model_name)
 CREATE INDEX IF NOT EXISTS idx_bindings_file ON model_file_bindings(file_id);
 CREATE INDEX IF NOT EXISTS idx_bindings_created ON model_file_bindings(created_at);
 
--- =============================================================================
--- 数据完整性检查和默认数据（可选）
--- =============================================================================
-
--- 验证表创建成功
-SELECT 
-    name, 
-    type,
-    CASE 
-        WHEN type = 'table' THEN '✓ 表创建成功'
-        WHEN type = 'index' THEN '✓ 索引创建成功'
-        ELSE '? 未知对象类型'
-    END as status
-FROM sqlite_master 
-WHERE name IN (
-    'files', 'conversations', 'api_usage', 'model_file_bindings',
-    'idx_files_type', 'idx_files_created', 'idx_files_name', 'idx_files_hash',
-    'idx_conv_api_key', 'idx_conv_created',
-    'idx_usage_api_key', 'idx_usage_created', 'idx_usage_endpoint', 'idx_usage_model', 'idx_usage_status', 'idx_usage_request_time',
-    'idx_bindings_model', 'idx_bindings_file', 'idx_bindings_created'
-)
-ORDER BY type DESC, name;
 
 -- 显示初始化完成信息
 SELECT 

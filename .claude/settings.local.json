@@ -35,7 +35,21 @@
       "Bash(dir:*)",
       "Bash(pkill:*)",
       "Bash(start /b npm run dev)",
-      "Bash(del \"C:\\Users\\Administrator\\Desktop\\auth\\api_usage_update.sql\")"
+      "Bash(del \"C:\\Users\\Administrator\\Desktop\\auth\\api_usage_update.sql\")",
+      "Bash(del \"\\?\\C:\\Users\\Administrator\\Desktop\\auth\\nul\")",
+      "Bash(cmd /c 'del \"\"\\\\?\\C:\\Users\\Administrator\\Desktop\\auth\\nul\"\"')",
+      "Bash(cmd /c 'erase \"\"\\\\?\\C:\\Users\\Administrator\\Desktop\\auth\\nul\"\"')",
+      "Bash(git clean -f nul)",
+      "Bash(cmd /c 'rd /s \"\"nul\"\"')",
+      "Bash(cmd /c 'del /f /q \"\".\\\\nul\"\"')",
+      "Bash(cmd /c 'ren nul temp.txt && del temp.txt')",
+      "Bash(git rm --cached nul)",
+      "Bash(git reset HEAD .)",
+      "Bash(git remote add origin https://github.com/xliking/smartchat.git)",
+      "Bash(git remote set-url origin https://github.com/xliking/smartchat.git)",
+      "Bash(git add .)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nfeat(deploy): 优化部署配置和文档结构\n\n- 更新 .gitignore 过滤规则，排除 .wrangler 目录和配置文件\n- 移除旧的部署脚本和临时文件\n- 添加中英文文档和部署指南\n- 优化 wrangler 配置结构和注释\n- 清理数据库初始化脚本中的验证查询\nEOF\n)\")",
+      "Bash(git add .claude/settings.local.json .gitignore complete-setup.sql wrangler-pages.toml wrangler.toml README.md README.zh.md 部署指南.md)"
     ],
     "deny": []
   }

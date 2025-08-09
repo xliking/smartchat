@@ -33,6 +33,7 @@ bucket_name = "ai-gateway-files"
 ENVIRONMENT = "production"
 
 # 定时任务（Cron Triggers）
+# 每6小时执行一次Notion同步
 [env.production.triggers]
-crons = ["0 */6 * * *"]  # 每6小时执行一次Notion同步
+crons = ["0 */6 * * *"]
 
