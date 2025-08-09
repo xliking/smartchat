@@ -19,6 +19,15 @@
 - 🔄 **流式支持**: 实时流式响应
 - 📈 **使用分析**: 跟踪 API 使用情况和统计信息
 
+## 📸 界面截图
+
+![首页](files/home.png)
+![模型管理](files/model.png)
+![知识库](files/knowledge.png)
+![系统设置](files/system.png)
+![Notion 集成](files/notion.png)
+![API 密钥管理](files/apikey.png)
+
 ## 🎯 应用场景
 
 ### 🤖 网站 AI 客服

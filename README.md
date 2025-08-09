@@ -19,6 +19,15 @@ A powerful **AI-powered chat platform** and **RAG (Retrieval-Augmented Generatio
 - 🔄 **Streaming Support**: Real-time streaming responses
 - 📈 **Usage Analytics**: Track API usage and statistics
 
+## 📸 Screenshots
+
+![Home](files/home.png)
+![Model Management](files/model.png)
+![Knowledge Base](files/knowledge.png)
+![System Settings](files/system.png)
+![Notion Integration](files/notion.png)
+![API Key Management](files/apikey.png)
+
 ## 🎯 Use Cases
 
 ### 🤖 Website AI Customer Service
