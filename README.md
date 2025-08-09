@@ -35,20 +35,6 @@ Create smart Q&A systems for:
 - Educational content assistance
 - Research paper analysis
 
-### 💼 Enterprise AI Assistant
-Deploy intelligent assistants for:
-- Employee onboarding and training
-- HR policy inquiries
-- IT helpdesk automation
-- Meeting summarization and action items
-
-### 🎓 Educational AI Tutor
-Build personalized learning experiences:
-- Subject-specific tutoring
-- Homework assistance
-- Language learning practice
-- Exam preparation guidance
-
 ### 🛒 E-commerce Shopping Assistant
 Enhance shopping experiences with:
 - Product recommendations
@@ -273,29 +259,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🆘 Support
 
 If you encounter any issues, please:
-- Check the [documentation](docs/)
-- Search existing [issues](https://github.com/your-username/smartchat-engine/issues)
+- Search existing [issues](https://github.com/xliking/smartchat/issues)
 - Create a new issue with detailed information
 
 ---
-
-## 🌟 Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=your-username/smartchat-engine&type=Date)](https://star-history.com/#your-username/smartchat-engine&Date)
-
-## 🙏 Acknowledgments
-
-- [Cloudflare Workers](https://workers.cloudflare.com/) for serverless infrastructure
-- [OpenAI](https://openai.com/) for API standards
-- [SiliconFlow](https://siliconflow.cn/) for AI model services
-- All contributors and users of this project
-
----
-
-<div align="center">
-
-**If this project helps you, please give it a ⭐️!**
-
-Made with ❤️ by [Your Name](https://github.com/your-username)
-
-</div>

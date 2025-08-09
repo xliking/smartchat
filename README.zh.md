@@ -34,20 +34,6 @@
 - 教育内容辅助
 - 研究论文分析
 
-### 💼 企业 AI 助手
-部署智能助手用于：
-- 员工入职和培训
-- HR 政策咨询
-- IT 服务台自动化
-- 会议总结和行动项目
-
-### 🎓 教育 AI 导师
-构建个性化学习体验：
-- 学科专门辅导
-- 作业协助
-- 语言学习练习
-- 考试准备指导
-
 ### 🛒 电商购物顾问
 增强购物体验：
 - 产品推荐
@@ -257,14 +243,6 @@ wrangler d1 execute ai-gateway-db --command="SELECT * FROM files LIMIT 10" --env
 - `POST /api/keys` - 创建 API 密钥
 - `DELETE /api/keys/:id` - 删除 API 密钥
 
-## 🤝 贡献指南
-
-1. Fork 本仓库
-2. 创建功能分支
-3. 提交更改
-4. 推送到分支
-5. 创建 Pull Request
-
 ## 📄 许可证
 
 本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
@@ -272,29 +250,7 @@ wrangler d1 execute ai-gateway-db --command="SELECT * FROM files LIMIT 10" --env
 ## 🆘 技术支持
 
 如遇到问题，请：
-- 查看[文档](docs/)
-- 搜索现有[问题](https://github.com/your-username/smartchat-engine/issues)
+- 搜索现有[问题](https://github.com/xliking/smartchat/issues)
 - 创建新的 issue 并提供详细信息
 
 ---
-
-## 🌟 Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=your-username/smartchat-engine&type=Date)](https://star-history.com/#your-username/smartchat-engine&Date)
-
-## 🙏 致谢
-
-- [Cloudflare Workers](https://workers.cloudflare.com/) 提供无服务器基础设施
-- [OpenAI](https://openai.com/) 提供 API 标准
-- [SiliconFlow](https://siliconflow.cn/) 提供 AI 模型服务
-- 所有为本项目做出贡献的开发者和用户
-
----
-
-<div align="center">
-
-**如果这个项目对您有帮助，请给个 ⭐️！**
-
-用 ❤️ 制作 by [Your Name](https://github.com/your-username)
-
-</div>
